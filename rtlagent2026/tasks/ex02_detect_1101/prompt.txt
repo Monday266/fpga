@@ -1,0 +1,26 @@
+
+I would like you to implement a module named TopModule with the following
+interface. All input and output ports are one bit unless otherwise
+specified.
+
+ - input  clk
+ - input  reset
+ - input  in
+ - output detected
+
+The module should detect the sequence 1101 in a serial bit stream. The
+input in is sampled on the positive edge of the clock. Whenever the four
+most recent input bits, including the one sampled on the current cycle,
+are 1, 1, 0 and 1 in that order, detected is asserted after that clock
+edge; otherwise it is 0.
+
+Overlapping occurrences count separately: the input 1101101 contains two
+of them.
+
+reset is an active-high synchronous reset. When it is 1, all internal
+state is cleared on the next positive clock edge and detected becomes 0.
+After a reset, detected stays 0 until four input bits have been received.
+
+detected is a registered output and is asserted on the same cycle as the
+detection. Assume all sequential logic is triggered on the positive edge
+of the clock.

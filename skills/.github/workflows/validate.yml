@@ -1,0 +1,102 @@
+name: validate
+
+# Repo-wide checks that are this catalog's own business: the federation file and
+# the generated plugin manifests.
+#
+# Whether a *skill* is well formed is not here. Frontmatter, `name` rules,
+# description and body length, the governance card, the eval dataset, and the
+# references our markdown makes are all checked by skillscope, configured in
+# .github/workflows/evals.yml -- the same graders every repo that keeps skills
+# in a tree runs. Duplicating them here would be a second implementation to
+# keep in step, which is the drift that moving the harness out was meant to end.
+#
+# What is left needs a manifest, and skillscope reads none: which skills this
+# catalog publishes, and where it lists them, is ours to check.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - ".github/scripts/**"
+      - ".github/federation.json"
+      - "skills/**"
+      - "plugin-metadata.json"
+      - ".claude-plugin/**"
+      - ".cursor-plugin/**"
+      - ".codex-plugin/**"
+      - ".agents/plugins/**"
+      - ".github/workflows/validate.yml"
+  workflow_dispatch:
+
+jobs:
+  validate-manifests:
+    name: Validate plugin manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      # Schema-only check of the federation file: catches a malformed or
+      # mis-keyed source entry on the pull request that adds it, without
+      # cloning anything.
+      - name: Validate federation file
+        run: uv run .github/scripts/federate_skills.py --check-catalog
+
+      # Guards the federation machinery itself: change detection and the
+      # `main`-only rule both fail quietly when broken.
+      - name: Test the federation importer
+        run: uv run .github/scripts/test_federate_skills.py
+
+      # Guards the rules the `federation-guard` workflow enforces by closing a
+      # pull request or failing a required check. Both directions are costly to
+      # get wrong, and neither shows up until it has already turned someone
+      # away or let an edit land that the next nightly run deletes.
+      - name: Test the federation guard
+        run: uv run .github/scripts/test_federation_guard.py
+
+      # The guard trusts the registry this writes, so how approvals are keyed
+      # decides what each one clears -- a whole repo, or one project in it.
+      - name: Test the skill owners recorder
+        run: uv run .github/scripts/test_record_skill_owner.py
+
+      - name: Validate marketplace manifest
+        run: uv run .github/scripts/validate_marketplace.py
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install the claude CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Validate plugin with the claude CLI
+        run: claude plugin validate .
+
+      - name: Validate generated Cursor manifest
+        run: uv run .github/scripts/generate_cursor_marketplace.py --check
+
+      - name: Validate generated Codex manifests
+        run: uv run .github/scripts/generate_codex_plugin.py --check
+
+  # Single gate, so branch protection can require one check from this workflow.
+  # Kept as its own job even with one dependency: the required check's name
+  # stays put when a job is added beside it.
+  validate:
+    name: Validate plugin manifests and federation
+    needs: [validate-manifests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all validation jobs passed
+        run: |
+          echo "validate-manifests result: ${{ needs.validate-manifests.result }}"
+          if [ "${{ needs.validate-manifests.result }}" != "success" ]; then
+            echo "One or more validation jobs failed." >&2
+            exit 1
+          fi
+          echo "All manifest and federation validations passed."

@@ -1,0 +1,4 @@
+*.docx
+*.pptx
+.DS_Store
+__pycache__/

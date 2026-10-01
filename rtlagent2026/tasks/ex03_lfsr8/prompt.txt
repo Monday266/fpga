@@ -1,0 +1,26 @@
+
+I would like you to implement a module named TopModule with the following
+interface. All input and output ports are one bit unless otherwise
+specified.
+
+ - input  clk
+ - input  reset
+ - input  load
+ - input  data (8 bits)
+ - output q    (8 bits)
+
+The module should implement an 8-bit Fibonacci linear feedback shift
+register. On each positive clock edge:
+
+ - reset is an active-high synchronous reset and has the highest
+   priority. When it is 1, q is set to 8'h01.
+ - When reset is 0 and load is 1, q is set to data.
+ - When both reset and load are 0, q shifts left by one position:
+
+       q <= {q[6:0], feedback}
+
+   where feedback = q[7] ^ q[5] ^ q[4] ^ q[3].
+
+Note that reset takes priority over load: when both are 1 the result is
+8'h01. Assume all sequential logic is triggered on the positive edge of
+the clock.
