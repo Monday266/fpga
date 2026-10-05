@@ -76,6 +76,7 @@ class MultiAgentOrchestrator:
     def solve(self, prompt: str, interface: str, trace: TraceLogger, top_override: str = "") -> str:
         budget = DynamicBudgetController(deadline_s=DEADLINE_S, reserve_s=RESERVE_S, max_rounds=MAX_ROUNDS)
         self.llm.set_deadline(budget.deadline_at)
+        self.llm.set_trace_hook(trace.log)
 
         trace.log(
             tool="orchestrator",

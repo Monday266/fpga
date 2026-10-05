@@ -12,6 +12,7 @@ import os
 import re
 import textwrap
 import time
+from typing import Callable
 
 
 class LLMError(RuntimeError):
@@ -38,6 +39,7 @@ class LLM:
         # final artifact.  Teams can raise this explicitly for slower cards.
         self.timeout_s = float(os.environ.get("LLM_TIMEOUT_S", "90"))
         self.deadline_at: float | None = None
+        self.trace_hook: Callable[..., None] | None = None
 
         if self.backend == "openai" and not self.base_url:
             raise LLMError("LLM_BACKEND=openai requires LLM_BASE_URL")
@@ -56,6 +58,10 @@ class LLM:
         """Bind requests to the solve-level wall-clock deadline."""
         self.deadline_at = deadline_at
 
+    def set_trace_hook(self, hook: Callable[..., None] | None) -> None:
+        """Attach an optional structured observer without coupling to tracing."""
+        self.trace_hook = hook
+
     def remaining_s(self) -> float | None:
         if self.deadline_at is None:
             return None
@@ -69,15 +75,36 @@ class LLM:
         remaining = self.remaining_s()
         if remaining is not None and remaining <= 0.05:
             raise LLMError("solve deadline exhausted before LLM request")
-        if self.backend == "mock":
-            res = self._chat_mock(messages)
-        elif self.backend == "openai":
-            request_timeout = self.timeout_s if remaining is None else min(self.timeout_s, max(0.1, remaining))
-            res = self._chat_openai(messages, temp, tokens, timeout_s=request_timeout)
-        else:
-            raise LLMError(f"unknown LLM_BACKEND: {self.backend!r}")
+        try:
+            if self.backend == "mock":
+                res = self._chat_mock(messages)
+            elif self.backend == "openai":
+                request_timeout = self.timeout_s if remaining is None else min(self.timeout_s, max(0.1, remaining))
+                res = self._chat_openai(messages, temp, tokens, timeout_s=request_timeout)
+            else:
+                raise LLMError(f"unknown LLM_BACKEND: {self.backend!r}")
+        except Exception as exc:
+            self._emit_trace(
+                event="error", elapsed_s=round(time.time() - t0, 3),
+                error=f"{type(exc).__name__}: {exc}"[:300],
+                tokens_in=0, tokens_out=0,
+            )
+            raise
         res.elapsed_s = round(time.time() - t0, 3)
+        self._emit_trace(
+            event="response", elapsed_s=res.elapsed_s,
+            tokens_in=res.tokens_in, tokens_out=res.tokens_out,
+        )
         return res
+
+    def _emit_trace(self, **fields: object) -> None:
+        if self.trace_hook is None:
+            return
+        try:
+            self.trace_hook(tool="llm", backend=self.backend, model=self.model, **fields)
+        except Exception:
+            # Tracing must never make a model response fail.
+            pass
 
     def _chat_openai(self, messages: list[dict], temp: float, max_tok: int,
                      timeout_s: float | None = None) -> LLMResult:
