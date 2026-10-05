@@ -118,6 +118,13 @@ class RtlToolchain:
     def available(self) -> bool:
         return not self.reason
 
+    @staticmethod
+    def _license_error(log: str) -> bool:
+        return bool(re.search(
+            r"(?:license|licen[cs]e|flexlm|checkout\s+failed|no\s+valid\s+license)",
+            log or "", re.IGNORECASE,
+        ))
+
     # -------------------------------------------------------- zero-cost preflight
     def preflight(self, source: str, top: str) -> tuple[int, str]:
         """Reject obvious non-RTL artifacts before invoking Vivado.
@@ -207,6 +214,9 @@ class RtlToolchain:
             rc, out3 = _run([self.xsim or "xsim", "sim_snap", "-runall"], work, timeout_s / 3)
             full_log = out1 + "\n" + out2 + "\n" + out3
 
+            if self._license_error(full_log):
+                return -2, "LICENSE_ERROR: simulator license unavailable\n" + summarize_log(full_log)
+
             # Check simulator output, rather than xelab's informational log.
             if "TB_SUCCESS" in out3:
                 return 0, "Self-checking testbench passed successfully."
@@ -245,6 +255,8 @@ class RtlToolchain:
                  "-nojournal", "-log", "synth.log"],
                 work, timeout_s,
             )
+            if self._license_error(out):
+                return -2, "LICENSE_ERROR: synthesis license unavailable\n" + summarize_log(out)
             completed = any(marker in out for marker in (
                 "Synthesis finished", "Finished Technology Mapping",
                 "synth_design completed", "Synthesis completed", "AGENT_SYNTH_SUCCESS",

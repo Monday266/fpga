@@ -195,6 +195,15 @@ class MultiAgentOrchestrator:
                 elapsed_s=round(time.time() - t0, 3),
             )
 
+            if rc_sim < 0:
+                trace.log(tool="orchestrator", event="environment_error", stage="simulation",
+                          rc=rc_sim, excerpt=clean_sim_log[:500])
+                best_code, level = self.quality.get_best_deliverable(current_code, final_level=1)
+                trace.log(tool="orchestrator", event="finished", delivered_level=level,
+                          reason="environment_error", bytes=len(best_code),
+                          elapsed_total_s=round(budget.elapsed_s, 2))
+                return best_code
+
             if rc_sim != 0:
                 is_osc, _ = self.quality.record_attempt(current_code, current_level=1, round_num=rnd)
                 matched_skills = select_skills(self.skills, clean_sim_log, "Mismatches", "ASSERTION")
@@ -220,6 +229,15 @@ class MultiAgentOrchestrator:
                 excerpt=clean_synth_log[:1000],
                 elapsed_s=round(time.time() - t0, 3),
             )
+
+            if rc_synth < 0:
+                trace.log(tool="orchestrator", event="environment_error", stage="synthesis",
+                          rc=rc_synth, excerpt=clean_synth_log[:500])
+                best_code, level = self.quality.get_best_deliverable(current_code, final_level=2)
+                trace.log(tool="orchestrator", event="finished", delivered_level=level,
+                          reason="environment_error", bytes=len(best_code),
+                          elapsed_total_s=round(budget.elapsed_s, 2))
+                return best_code
 
             if rc_synth == 0:
                 self.quality.record_attempt(current_code, current_level=3, round_num=rnd)
