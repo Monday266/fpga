@@ -60,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
             names = {p["name"].lower() for p in ports}
             sequential = any(n in names for n in ("clk", "clock"))
             fallback_spec = HardwareSpec({
-                "module_name": top or "TopModule",
+                "module_name": args.top.strip() or top or "TopModule",
                 "ports": ports,
                 "is_sequential": sequential,
                 "clock_port": next((p["name"] for p in ports if p["name"].lower() in ("clk", "clock")), ""),
