@@ -18,9 +18,20 @@ class HardwareSpec:
         data = data if isinstance(data, dict) else {}
         self.module_name = str(data.get("module_name", "TopModule")).strip() or "TopModule"
         self.ports = self._normalize_ports(data.get("ports", []))
-        self.is_sequential = self._as_bool(data.get("is_sequential", False))
-        self.clock_port = self._as_text(data.get("clock_port", "clk" if self.is_sequential else ""))
-        self.reset_port = self._as_text(data.get("reset_port", "reset" if self.is_sequential else ""))
+        port_names = [port["name"] for port in self.ports]
+        clock_candidates = [name for name in port_names
+                            if "clk" in name.lower() or "clock" in name.lower()]
+        reset_candidates = [name for name in port_names
+                            if "reset" in name.lower() or "rst" in name.lower()]
+        self.is_sequential = self._as_bool(data.get("is_sequential", False)) or bool(clock_candidates)
+        requested_clock = self._as_text(data.get("clock_port", ""))
+        self.clock_port = requested_clock if requested_clock in port_names else (
+            clock_candidates[0] if self.is_sequential and clock_candidates else ""
+        )
+        requested_reset = self._as_text(data.get("reset_port", ""))
+        self.reset_port = requested_reset if requested_reset in port_names else (
+            reset_candidates[0] if reset_candidates else ""
+        )
         polarity = self._as_text(data.get("reset_polarity", "active_high")).lower().replace("-", "_")
         self.reset_polarity = polarity if polarity in {"active_high", "active_low"} else "active_high"
         sync = self._as_text(data.get("reset_sync", "sync")).lower().replace("-", "_")
