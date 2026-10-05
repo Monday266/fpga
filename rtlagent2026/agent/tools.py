@@ -224,7 +224,11 @@ class RtlToolchain:
                 return 1, "Self-checking testbench reported mismatch:\n" + summarize_log(out3)
 
             if rc == 0:
-                return 1, "Simulation ended without TB_SUCCESS/TB_FAILURE marker:\n" + summarize_log(full_log)
+                # Vivado/xsim can exit successfully after failing to obtain a
+                # simulator license, while emitting neither a mismatch nor a
+                # verdict line.  Treat the missing verdict as an environment
+                # failure so the repair loop does not corrupt a valid DUT.
+                return -2, "ENVIRONMENT_ERROR: xsim exited 0 without a TB verdict marker:\n" + summarize_log(full_log)
             return 1, summarize_log(full_log)
         finally:
             if os.environ.get("AGENT_KEEP_WORK") != "1":
@@ -261,6 +265,11 @@ class RtlToolchain:
                 "Synthesis finished", "Finished Technology Mapping",
                 "synth_design completed", "Synthesis completed", "AGENT_SYNTH_SUCCESS",
             ))
+            if rc == 0 and not completed:
+                # A missing synthesis marker with rc=0 is the characteristic
+                # silent-license/tool-environment failure documented for the
+                # official Vivado image, not evidence that the RTL is wrong.
+                return -2, "ENVIRONMENT_ERROR: Vivado exited 0 without AGENT_SYNTH_SUCCESS:\n" + summarize_log(out)
             ok = (rc == 0 and completed
                   and not re.search(r"(?:^|\s)ERROR:", out, re.IGNORECASE)
                   and "Synthesis failed" not in out)
