@@ -15,24 +15,61 @@ from .tools import parse_interface_contract
 
 class HardwareSpec:
     def __init__(self, data: dict):
+        data = data if isinstance(data, dict) else {}
         self.module_name = str(data.get("module_name", "TopModule")).strip() or "TopModule"
-        self.ports = data.get("ports", []) if isinstance(data.get("ports", []), list) else []
-        self.is_sequential = bool(data.get("is_sequential", False))
-        self.clock_port = str(data.get("clock_port", "clk" if self.is_sequential else "")).strip()
-        self.reset_port = str(data.get("reset_port", "reset" if self.is_sequential else "")).strip()
-        polarity = str(data.get("reset_polarity", "active_high")).lower().replace("-", "_")
+        self.ports = self._normalize_ports(data.get("ports", []))
+        self.is_sequential = self._as_bool(data.get("is_sequential", False))
+        self.clock_port = self._as_text(data.get("clock_port", "clk" if self.is_sequential else ""))
+        self.reset_port = self._as_text(data.get("reset_port", "reset" if self.is_sequential else ""))
+        polarity = self._as_text(data.get("reset_polarity", "active_high")).lower().replace("-", "_")
         self.reset_polarity = polarity if polarity in {"active_high", "active_low"} else "active_high"
-        sync = str(data.get("reset_sync", "sync")).lower()
+        sync = self._as_text(data.get("reset_sync", "sync")).lower().replace("-", "_")
         self.reset_sync = sync if sync in {"sync", "async"} else "sync"
-        self.reset_value = str(data.get("reset_value", "0"))
-        self.core_logic_summary = str(data.get("core_logic_summary", ""))
-        self.fsm_states = data.get("fsm_states", []) if isinstance(data.get("fsm_states", []), list) else []
-        self.state_transition_table = str(data.get("state_transition_table", ""))
+        self.reset_value = self._as_text(data.get("reset_value", "0")) or "0"
+        self.core_logic_summary = self._as_text(data.get("core_logic_summary", ""))
+        states = data.get("fsm_states", [])
+        self.fsm_states = [self._as_text(x) for x in states if self._as_text(x)] if isinstance(states, list) else []
+        self.state_transition_table = self._as_text(data.get("state_transition_table", ""))
         priorities = data.get("control_priorities", [])
-        self.control_priorities = [str(x).strip() for x in priorities] if isinstance(priorities, list) else []
-        pattern = str(data.get("recommended_pattern", "standard"))
+        self.control_priorities = [self._as_text(x) for x in priorities
+                                   if self._as_text(x)] if isinstance(priorities, list) else []
+        pattern = self._as_text(data.get("recommended_pattern", "standard")).lower().replace("-", "_")
         self.recommended_pattern = pattern if pattern in {"shift_register", "three_process_fsm", "combinational_tree", "counter", "standard"} else "standard"
         self.test_scenarios = data.get("test_scenarios", []) if isinstance(data.get("test_scenarios", []), list) else []
+
+    @staticmethod
+    def _as_text(value: object) -> str:
+        return "" if value is None else str(value).strip()
+
+    @staticmethod
+    def _as_bool(value: object) -> bool:
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"", "0", "false", "no", "off", "none", "null"}:
+                return False
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+        return bool(value)
+
+    @classmethod
+    def _normalize_ports(cls, ports: object) -> list[dict]:
+        if not isinstance(ports, list):
+            return []
+        normalized = []
+        seen = set()
+        for port in ports:
+            if not isinstance(port, dict):
+                continue
+            name = cls._as_text(port.get("name"))
+            direction = cls._as_text(port.get("direction", "input")).lower()
+            try:
+                width = max(1, int(port.get("width", 1)))
+            except (TypeError, ValueError):
+                width = 1
+            if name and direction in {"input", "output", "inout"} and name not in seen:
+                normalized.append({"name": name, "direction": direction, "width": width})
+                seen.add(name)
+        return normalized
 
     def to_dict(self) -> dict:
         return {
