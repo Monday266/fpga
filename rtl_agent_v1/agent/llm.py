@@ -1,0 +1,189 @@
+"""LLM client for multi-agent RTL workflow.
+
+Supports:
+- LLM_BACKEND=mock: for local dry-run, unit tests, and verifying contracts.
+- LLM_BACKEND=openai: for local vLLM (submission requirement) or commercial API (development).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import textwrap
+import time
+
+
+class LLMError(RuntimeError):
+    pass
+
+
+class LLMResult:
+    def __init__(self, text: str, tokens_in: int = 0, tokens_out: int = 0, elapsed_s: float = 0.0):
+        self.text = text
+        self.tokens_in = tokens_in
+        self.tokens_out = tokens_out
+        self.elapsed_s = elapsed_s
+
+
+class LLM:
+    def __init__(self) -> None:
+        self.backend = os.environ.get("LLM_BACKEND", "mock").strip().lower()
+        self.model = os.environ.get("LLM_MODEL", "mock-model")
+        self.base_url = os.environ.get("LLM_BASE_URL", "").rstrip("/")
+        self.api_key = os.environ.get("LLM_API_KEY", "")
+        self.max_tokens = int(os.environ.get("LLM_MAX_TOKENS", "4096"))
+        self.temperature = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
+        self.timeout_s = float(os.environ.get("LLM_TIMEOUT_S", "180"))
+
+        if self.backend == "openai" and not self.base_url:
+            raise LLMError("LLM_BACKEND=openai requires LLM_BASE_URL")
+
+    def describe(self) -> dict:
+        return {
+            "backend": self.backend,
+            "model": self.model,
+            "base_url": self.base_url or None,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+        }
+
+    def chat(self, messages: list[dict], temperature: float | None = None, max_tokens: int | None = None) -> LLMResult:
+        temp = self.temperature if temperature is None else temperature
+        tokens = self.max_tokens if max_tokens is None else max_tokens
+
+        t0 = time.time()
+        if self.backend == "mock":
+            res = self._chat_mock(messages)
+        elif self.backend == "openai":
+            res = self._chat_openai(messages, temp, tokens)
+        else:
+            raise LLMError(f"unknown LLM_BACKEND: {self.backend!r}")
+        res.elapsed_s = round(time.time() - t0, 3)
+        return res
+
+    def _chat_openai(self, messages: list[dict], temp: float, max_tok: int) -> LLMResult:
+        import requests
+
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": max_tok,
+            "temperature": temp,
+            "stream": False,
+        }
+
+        resp = requests.post(
+            f"{self.base_url}/chat/completions",
+            headers=headers,
+            data=json.dumps(payload),
+            timeout=self.timeout_s,
+        )
+        if resp.status_code != 200:
+            raise LLMError(f"HTTP {resp.status_code}: {resp.text[:500]}")
+
+        body = resp.json()
+        try:
+            text = body["choices"][0]["message"]["content"] or ""
+        except (KeyError, IndexError) as exc:
+            raise LLMError(f"unexpected response shape: {body}") from exc
+
+        usage = body.get("usage") or {}
+        return LLMResult(
+            text=text,
+            tokens_in=usage.get("prompt_tokens", 0),
+            tokens_out=usage.get("completion_tokens", 0),
+        )
+
+    def _chat_mock(self, messages: list[dict]) -> LLMResult:
+        """Deterministic mock response for offline validation."""
+        full_prompt = "\n".join(m.get("content", "") for m in messages)
+
+        # Mock: detect if this is a Verifier / Testbench request
+        if "tb_self_check" in full_prompt or "Testbench" in full_prompt or "tester" in full_prompt.lower():
+            tb_code = textwrap.dedent("""\
+                `timescale 1ns/1ps
+                module tb_self_check();
+                  reg clk = 0;
+                  always #2.5 clk = ~clk;
+                  initial begin
+                    #20;
+                    $display("TB_SUCCESS: All self-tests passed with 0 errors.");
+                    $finish;
+                  end
+                endmodule
+            """)
+            return LLMResult(text=f"```verilog\n{tb_code}```", tokens_in=100, tokens_out=50)
+
+        # Mock: detect if this is an Architect Spec request
+        if "JSON" in full_prompt and "spec" in full_prompt.lower():
+            mock_spec = {
+                "module_name": "TopModule",
+                "ports": [{"name": "clk", "direction": "input", "width": 1}],
+                "is_sequential": False,
+                "reset_type": "none",
+                "summary": "Mock specification"
+            }
+            return LLMResult(text=f"```json\n{json.dumps(mock_spec, indent=2)}\n```", tokens_in=80, tokens_out=40)
+
+        # Mock: generate standard RTL module stub
+        m_top = re.search(r"module\s+(\w+)", full_prompt)
+        top_name = m_top.group(1) if m_top else "TopModule"
+
+        # Check for inputs and outputs in prompt
+        ports = []
+        for line in full_prompt.splitlines():
+            m = re.search(r"-\s*(input|output)\s+([a-zA-Z_]\w*)\s*(?:\((\d+)\s*(?:bits?|位)\))?", line)
+            if m:
+                direction, name, width = m.group(1), m.group(2), m.group(3)
+                w_str = f"[{int(width)-1}:0] " if width and int(width) > 1 else ""
+                ports.append(f"  {direction} {w_str}{name}")
+
+        port_block = ",\n".join(ports) if ports else "  input clk,\n  output reg [7:0] q"
+        stub = textwrap.dedent(f"""\
+            module {top_name} (
+            {port_block}
+            );
+              // MOCK RTL V1 AGENT
+            endmodule
+        """)
+        return LLMResult(text=f"```verilog\n{stub}\n```", tokens_in=120, tokens_out=60)
+
+
+def extract_code(text: str, tag: str = "verilog") -> str:
+    """Extract code block matching the specified language or fallback to raw module."""
+    m = re.search(rf"```{tag}?\s*(.*?)```", text, re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1).strip() + "\n"
+    # Fallback: look for ```sv or ```anything
+    m = re.search(r"```(?:\w+)?\s*(.*?)```", text, re.DOTALL)
+    if m:
+        return m.group(1).strip() + "\n"
+    # Fallback: find module ... endmodule
+    m = re.search(r"\b(module\s+\w+\b.*?endmodule)", text, re.DOTALL)
+    if m:
+        return m.group(1).strip() + "\n"
+    return ""
+
+
+def extract_json(text: str) -> dict:
+    """Extract JSON object from response."""
+    m = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    raw = m.group(1) if m else text
+    raw = raw.strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # Best effort slice { ... }
+        s = raw.find("{")
+        e = raw.rfind("}")
+        if s != -1 and e != -1 and e > s:
+            try:
+                return json.loads(raw[s:e+1])
+            except Exception:
+                pass
+        return {}
