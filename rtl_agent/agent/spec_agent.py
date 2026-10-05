@@ -33,8 +33,14 @@ class HardwareSpec:
             reset_candidates[0] if reset_candidates else ""
         )
         polarity = self._as_text(data.get("reset_polarity", "active_high")).lower().replace("-", "_")
+        if polarity == "active_high" and self.reset_port.lower().endswith("_n"):
+            polarity = "active_low"
         self.reset_polarity = polarity if polarity in {"active_high", "active_low"} else "active_high"
         sync = self._as_text(data.get("reset_sync", "sync")).lower().replace("-", "_")
+        if sync in {"asynchronous", "async_reset"}:
+            sync = "async"
+        elif sync in {"synchronous", "sync_reset"}:
+            sync = "sync"
         self.reset_sync = sync if sync in {"sync", "async"} else "sync"
         self.reset_value = self._as_text(data.get("reset_value", "0")) or "0"
         self.core_logic_summary = self._as_text(data.get("core_logic_summary", ""))
