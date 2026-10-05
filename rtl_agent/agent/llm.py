@@ -74,7 +74,12 @@ class LLM:
         t0 = time.time()
         remaining = self.remaining_s()
         if remaining is not None and remaining <= 0.05:
-            raise LLMError("solve deadline exhausted before LLM request")
+            exc = LLMError("solve deadline exhausted before LLM request")
+            self._emit_trace(
+                event="error", elapsed_s=0.0, tokens_in=0, tokens_out=0,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            raise exc
         try:
             if self.backend == "mock":
                 res = self._chat_mock(messages)
