@@ -4,7 +4,7 @@
 ---
 
 ## 摘要 (Executive Summary)
-针对全国大学生嵌入式芯片与系统设计竞赛（AMD 赛道）“RTL 本地智能体设计”的单卡 32GB 显存红线、Vivado 2026.1 原生闭环工具链、断网沙箱及四维特殊评分机制（能力 30 / 增益 40 / 代价 10 / 工程质量 20），团队深度融合**前沿学术成果**（AutoChip、VerilogEval v2、RTLFixer、AssertLLM、Spec2RTL）与**工业级开源自主编程智能体架构**（OpenCode、Aider、SWE-agent、MetaGPT），对智能体进行了全方位重构与自愈迭代，打造出集**“状态机思维链（FSM CoT）、零成本左移防御、4维 SVA 微自测试台、局部外科手术式补丁（Search-Replace Diff）、动态墙钟分配与单调质量守卫”**于一体的高阶多智能体系统（`rtl_agent/`）。
+针对全国大学生嵌入式芯片与系统设计竞赛（AMD 赛道）“RTL 本地智能体设计”的单卡 32GB 显存红线、Vivado 2026.1 原生闭环工具链、断网沙箱及四维特殊评分机制（能力 30 / 增益 40 / 代价 10 / 工程质量 20），团队深度融合**前沿学术成果**（AutoChip、VerilogEval v2、RTLFixer、AssertLLM、Spec2RTL）与**工业级开源自主编程智能体架构**（OpenCode、Aider、SWE-agent、MetaGPT），对智能体进行了全方位重构与自愈迭代，打造出集**“状态机思维链（FSM CoT）、零成本左移防御、4维 SVA 微自测试台、局部外科手术式补丁（Search-Replace Diff）、动态墙钟分配与单调质量守卫”**于一体的高阶多智能体系统（`rtlagent2026/`）。
 
 本报告系统阐述相关学术前沿调研、工业级架构映射、核心组件数学建模与消融验证成果。
 
@@ -88,17 +88,17 @@ flowchart LR
 
 ## 三、 RTL Agent 总体架构与核心组件详解
 
-升级后的智能体在单个项目工程目录（`rtl_agent/`）中统一组织，实现全流水线无缝集成：
+升级后的智能体在单个项目工程目录（`rtlagent2026/`）中统一组织，实现全流水线无缝集成：
 
 ### 3.1 核心组件实现清单
 
 | 组件模块 | 文件位置 | 核心功能与性能收益 |
 | :--- | :--- | :--- |
-| **`DeterministicGuard`** | [`agent/deterministic_guard.py`](file:///home/q/文档/fpga/rtl_agent/agent/deterministic_guard.py) | 纯 Python/正则 AST 模块头提取与修复器。自动对齐端口列表、修正模块名、补齐寄存器 `reg` 声明，**0 耗时消灭全部 L0 错误**。 |
-| **`DiffPatcher`** | [`agent/diff_patcher.py`](file:///home/q/文档/fpga/rtl_agent/agent/diff_patcher.py) | 支持空白容错的差分替换器。仅替换局部故障代码块，**降低 70% 推理 Token，延迟从 18s 缩短至 2~3s**。 |
-| **`DiagnosticPruner`** | [`agent/diagnostic_pruner.py`](file:///home/q/文档/fpga/rtl_agent/agent/diagnostic_pruner.py) | 日志降噪切片器。剔除 92% Vivado 无关信息，提取 `[VRFC 10-*]`、`[Synth 8-327]` 关键特征，并挂载源码报错行 $\pm 3$ 行上下文。 |
-| **`DynamicBudgetController`** | [`agent/budget_controller.py`](file:///home/q/文档/fpga/rtl_agent/agent/budget_controller.py) | 动态墙钟控制器。根据 360s 硬限制动态缩放单步超时；达成 L3 综合时**激进提早退出（Early Exit）**，拿满 10 分代价分。 |
-| **`QualityRollbackGuard`** | [`agent/oscillation_guard.py`](file:///home/q/文档/fpga/rtl_agent/agent/oscillation_guard.py) | 质量单调守卫与循环哈希拦截器。若后序修补导致功能恶化，自动回滚至历史最高等级（L1/L2/L3）快照，杜绝逆向降级。 |
+| **`DeterministicGuard`** | [`agent/deterministic_guard.py`](file:///home/q/文档/fpga/rtlagent2026/agent/deterministic_guard.py) | 纯 Python/正则 AST 模块头提取与修复器。自动对齐端口列表、修正模块名、补齐寄存器 `reg` 声明，**0 耗时消灭全部 L0 错误**。 |
+| **`DiffPatcher`** | [`agent/diff_patcher.py`](file:///home/q/文档/fpga/rtlagent2026/agent/diff_patcher.py) | 支持空白容错的差分替换器。仅替换局部故障代码块，**降低 70% 推理 Token，延迟从 18s 缩短至 2~3s**。 |
+| **`DiagnosticPruner`** | [`agent/diagnostic_pruner.py`](file:///home/q/文档/fpga/rtlagent2026/agent/diagnostic_pruner.py) | 日志降噪切片器。剔除 92% Vivado 无关信息，提取 `[VRFC 10-*]`、`[Synth 8-327]` 关键特征，并挂载源码报错行 $\pm 3$ 行上下文。 |
+| **`DynamicBudgetController`** | [`agent/budget_controller.py`](file:///home/q/文档/fpga/rtlagent2026/agent/budget_controller.py) | 动态墙钟控制器。根据 360s 硬限制动态缩放单步超时；达成 L3 综合时**激进提早退出（Early Exit）**，拿满 10 分代价分。 |
+| **`QualityRollbackGuard`** | [`agent/oscillation_guard.py`](file:///home/q/文档/fpga/rtlagent2026/agent/oscillation_guard.py) | 质量单调守卫与循环哈希拦截器。若后序修补导致功能恶化，自动回滚至历史最高等级（L1/L2/L3）快照，杜绝逆向降级。 |
 
 ### 3.2 四大子智能体协同机制
 1. **架构规划智能体 (`SpecAgent`)**：
@@ -194,6 +194,6 @@ $$\text{Score}_{\text{Gain}} = 40 \times \frac{\log(\text{Gain})}{\log(\text{Max
 
 ## 六、 结论与后续演进建议
 
-本报告构建的 `rtl_agent/` 完整融合了现代 EDA 学术前沿反馈理论与工业级自主 Agent 架构模式，在保证单卡 32GB 显存严格合规的前提下，实现了能力、增益、代价和工程质量全维度的均衡最优。
+本报告构建的 `rtlagent2026/` 完整融合了现代 EDA 学术前沿反馈理论与工业级自主 Agent 架构模式，在保证单卡 32GB 显存严格合规的前提下，实现了能力、增益、代价和工程质量全维度的均衡最优。
 
 后续参赛阶段，建议在具备 GPU 的物理服务器上拉起真实 vLLM 实例，直接运行 `./run.sh` 与 `./run_baseline.sh` 进行百题规模的大规模压力验证与超参数微调！
