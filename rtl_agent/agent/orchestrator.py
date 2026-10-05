@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import re
 import time
 
 from .budget_controller import DynamicBudgetController
@@ -72,7 +73,7 @@ class MultiAgentOrchestrator:
         self.pruner = DiagnosticPruner()
         self.quality = QualityRollbackGuard()
 
-    def solve(self, prompt: str, interface: str, trace: TraceLogger) -> str:
+    def solve(self, prompt: str, interface: str, trace: TraceLogger, top_override: str = "") -> str:
         budget = DynamicBudgetController(deadline_s=DEADLINE_S, reserve_s=RESERVE_S, max_rounds=MAX_ROUNDS)
         self.llm.set_deadline(budget.deadline_at)
 
@@ -89,10 +90,18 @@ class MultiAgentOrchestrator:
         # ------------------------------------------------ Phase 1: Spec Architect
         t0 = time.time()
         spec = self.spec_agent.analyze(prompt, interface)
+        requested_top = top_override.strip()
+        if requested_top and re.fullmatch(r"[A-Za-z_]\w*", requested_top):
+            # The CLI override is an explicit caller contract.  Keep the
+            # parsed port list and all behavioral deductions, but make every
+            # downstream artifact use the requested top module consistently.
+            spec.module_name = requested_top
         trace.log(
             tool="spec_architect",
             event="spec_derived",
             spec=spec.to_dict(),
+            top_override=requested_top or None,
+            top_override_valid=not requested_top or bool(re.fullmatch(r"[A-Za-z_]\w*", requested_top)),
             elapsed_s=round(time.time() - t0, 3),
         )
 

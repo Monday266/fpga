@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         prompt, interface = read_task(args.input)
         orchestrator = MultiAgentOrchestrator(SKILL_DIR)
-        code = orchestrator.solve(prompt, interface, trace)
+        code = orchestrator.solve(prompt, interface, trace, top_override=args.top)
     except Exception as exc:
         trace.log(tool="agent", event="exception", error=f"{type(exc).__name__}: {exc}"[:400])
         print(f"RTL Agent Error: {type(exc).__name__}: {exc}", file=sys.stderr)
