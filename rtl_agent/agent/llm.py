@@ -37,6 +37,7 @@ class LLM:
         # A stalled local server must leave time for Vivado feedback and a
         # final artifact.  Teams can raise this explicitly for slower cards.
         self.timeout_s = float(os.environ.get("LLM_TIMEOUT_S", "90"))
+        self.deadline_at: float | None = None
 
         if self.backend == "openai" and not self.base_url:
             raise LLMError("LLM_BACKEND=openai requires LLM_BASE_URL")
@@ -48,23 +49,38 @@ class LLM:
             "base_url": self.base_url or None,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
+            "deadline_bound": self.deadline_at is not None,
         }
+
+    def set_deadline(self, deadline_at: float | None) -> None:
+        """Bind requests to the solve-level wall-clock deadline."""
+        self.deadline_at = deadline_at
+
+    def remaining_s(self) -> float | None:
+        if self.deadline_at is None:
+            return None
+        return max(0.0, self.deadline_at - time.time())
 
     def chat(self, messages: list[dict], temperature: float | None = None, max_tokens: int | None = None) -> LLMResult:
         temp = self.temperature if temperature is None else temperature
         tokens = self.max_tokens if max_tokens is None else max_tokens
 
         t0 = time.time()
+        remaining = self.remaining_s()
+        if remaining is not None and remaining <= 0.05:
+            raise LLMError("solve deadline exhausted before LLM request")
         if self.backend == "mock":
             res = self._chat_mock(messages)
         elif self.backend == "openai":
-            res = self._chat_openai(messages, temp, tokens)
+            request_timeout = self.timeout_s if remaining is None else min(self.timeout_s, max(0.1, remaining))
+            res = self._chat_openai(messages, temp, tokens, timeout_s=request_timeout)
         else:
             raise LLMError(f"unknown LLM_BACKEND: {self.backend!r}")
         res.elapsed_s = round(time.time() - t0, 3)
         return res
 
-    def _chat_openai(self, messages: list[dict], temp: float, max_tok: int) -> LLMResult:
+    def _chat_openai(self, messages: list[dict], temp: float, max_tok: int,
+                     timeout_s: float | None = None) -> LLMResult:
         import requests
 
         headers = {"Content-Type": "application/json"}
@@ -83,7 +99,7 @@ class LLM:
             f"{self.base_url}/chat/completions",
             headers=headers,
             data=json.dumps(payload),
-            timeout=self.timeout_s,
+            timeout=self.timeout_s if timeout_s is None else timeout_s,
         )
         if resp.status_code != 200:
             raise LLMError(f"HTTP {resp.status_code}: {resp.text[:500]}")

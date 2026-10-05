@@ -18,6 +18,10 @@ class DynamicBudgetController:
         return time.time() - self.start_time
 
     @property
+    def deadline_at(self) -> float:
+        return self.start_time + self.deadline_s - self.reserve_s
+
+    @property
     def remaining_pool_s(self) -> float:
         return max(0.0, self.deadline_s - self.elapsed_s - self.reserve_s)
 
