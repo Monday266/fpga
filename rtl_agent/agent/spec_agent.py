@@ -15,20 +15,24 @@ from .tools import parse_interface_contract
 
 class HardwareSpec:
     def __init__(self, data: dict):
-        self.module_name = data.get("module_name", "TopModule")
-        self.ports = data.get("ports", [])
-        self.is_sequential = data.get("is_sequential", False)
-        self.clock_port = data.get("clock_port", "clk" if self.is_sequential else "")
-        self.reset_port = data.get("reset_port", "reset" if self.is_sequential else "")
-        self.reset_polarity = data.get("reset_polarity", "active_high")
-        self.reset_sync = data.get("reset_sync", "sync")
-        self.reset_value = data.get("reset_value", "0")
-        self.core_logic_summary = data.get("core_logic_summary", "")
-        self.fsm_states = data.get("fsm_states", [])
-        self.state_transition_table = data.get("state_transition_table", "")
-        self.control_priorities = data.get("control_priorities", [])
-        self.recommended_pattern = data.get("recommended_pattern", "standard")
-        self.test_scenarios = data.get("test_scenarios", [])
+        self.module_name = str(data.get("module_name", "TopModule")).strip() or "TopModule"
+        self.ports = data.get("ports", []) if isinstance(data.get("ports", []), list) else []
+        self.is_sequential = bool(data.get("is_sequential", False))
+        self.clock_port = str(data.get("clock_port", "clk" if self.is_sequential else "")).strip()
+        self.reset_port = str(data.get("reset_port", "reset" if self.is_sequential else "")).strip()
+        polarity = str(data.get("reset_polarity", "active_high")).lower().replace("-", "_")
+        self.reset_polarity = polarity if polarity in {"active_high", "active_low"} else "active_high"
+        sync = str(data.get("reset_sync", "sync")).lower()
+        self.reset_sync = sync if sync in {"sync", "async"} else "sync"
+        self.reset_value = str(data.get("reset_value", "0"))
+        self.core_logic_summary = str(data.get("core_logic_summary", ""))
+        self.fsm_states = data.get("fsm_states", []) if isinstance(data.get("fsm_states", []), list) else []
+        self.state_transition_table = str(data.get("state_transition_table", ""))
+        priorities = data.get("control_priorities", [])
+        self.control_priorities = [str(x).strip() for x in priorities] if isinstance(priorities, list) else []
+        pattern = str(data.get("recommended_pattern", "standard"))
+        self.recommended_pattern = pattern if pattern in {"shift_register", "three_process_fsm", "combinational_tree", "counter", "standard"} else "standard"
+        self.test_scenarios = data.get("test_scenarios", []) if isinstance(data.get("test_scenarios", []), list) else []
 
     def to_dict(self) -> dict:
         return {
@@ -156,8 +160,14 @@ class SpecAgent:
                 seen.add(name)
         if clean_ports:
             parsed["ports"] = clean_ports
+        else:
+            parsed["ports"] = fb_port_list
         port_names = [p["name"].lower() for p in parsed.get("ports", [])]
         lower_prompt = (prompt or "").lower()
+        if parsed.get("recommended_pattern") not in {
+            "shift_register", "three_process_fsm", "combinational_tree", "counter", "standard", None, ""
+        }:
+            parsed["recommended_pattern"] = "standard"
         if not parsed.get("core_logic_summary"):
             if "population count" in lower_prompt or "popcount" in lower_prompt:
                 parsed["core_logic_summary"] = "Count the asserted bits of the input vector."
@@ -168,10 +178,29 @@ class SpecAgent:
         if not parsed.get("recommended_pattern") or parsed.get("recommended_pattern") == "standard":
             if "population count" in lower_prompt or "popcount" in lower_prompt:
                 parsed["recommended_pattern"] = "combinational_tree"
-            elif "1101" in lower_prompt or "lfsr" in lower_prompt or "linear feedback shift" in lower_prompt:
+            elif ("1101" in lower_prompt or "lfsr" in lower_prompt
+                  or "linear feedback shift" in lower_prompt or "shift register" in lower_prompt):
                 parsed["recommended_pattern"] = "shift_register"
         if any(n in port_names for n in ("clk", "clock")) and not parsed.get("control_priorities"):
             parsed["control_priorities"] = ["reset", "load", "enable"]
+        # The clock/reset names are part of the port contract.  Prefer the
+        # deterministic names when the model invents a name that is absent.
+        clock_names = {p["name"] for p in parsed.get("ports", [])
+                       if "clk" in p["name"].lower() or "clock" in p["name"].lower()}
+        reset_names = {p["name"] for p in parsed.get("ports", [])
+                       if "reset" in p["name"].lower() or "rst" in p["name"].lower()}
+        if clock_names and parsed.get("clock_port") not in clock_names:
+            parsed["clock_port"] = sorted(clock_names)[0]
+        if reset_names and parsed.get("reset_port") not in reset_names:
+            parsed["reset_port"] = sorted(reset_names)[0]
+        if clock_names:
+            parsed["is_sequential"] = True
+        if any(name.lower().endswith("_n") for name in reset_names) or "active-low" in lower_prompt or "active low" in lower_prompt:
+            parsed["reset_polarity"] = "active_low"
+        if "asynchronous" in lower_prompt or "asynchronous reset" in lower_prompt:
+            parsed["reset_sync"] = "async"
+        elif "synchronous" in lower_prompt or "synchronous reset" in lower_prompt:
+            parsed["reset_sync"] = "sync"
         if not any("clk" in n or "clock" in n for n in port_names):
             parsed["is_sequential"] = False
             parsed["clock_port"] = ""
