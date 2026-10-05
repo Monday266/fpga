@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 
 class QualityRollbackGuard:
     def __init__(self):
         self.history_hashes: List[str] = []
+        self._hash_levels: Dict[str, int] = {}
+        self._last_hash: str = ""
         self.best_level: int = -1  # 0: L0, 1: L1, 2: L2, 3: L3
         self.best_code: str = ""
         self.best_round: int = 0
@@ -20,27 +22,37 @@ class QualityRollbackGuard:
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
     def record_attempt(self, code: str, current_level: int, round_num: int) -> Tuple[bool, str]:
-        """Record candidate code.
+        """Record a candidate and report only genuine repair cycles.
 
-        Returns: (is_oscillating, status_message)
+        The orchestrator records the same candidate at multiple milestones
+        (for example after preflight and again before simulation).  Those
+        duplicate observations are progress bookkeeping, not oscillation.  A
+        cycle is reported only when a previously seen candidate reappears at
+        the same or lower milestone after another candidate was tried.
         """
         h = self._hash(code)
-        if h in self.history_hashes:
-            # The same source can legitimately pass L1, then L2.  Preserve the
-            # higher milestone instead of mistaking that promotion for a loop.
-            if current_level > self.best_level:
-                self.best_level = current_level
-                self.best_code = code
-                self.best_round = round_num
-            return True, "DUPLICATE_SOURCE: milestone updated without another repair."
+        prior_level = self._hash_levels.get(h)
+        repeated_after_other = bool(prior_level is not None and h != self._last_hash)
 
-        self.history_hashes.append(h)
+        if prior_level is None:
+            self.history_hashes.append(h)
+            self._hash_levels[h] = current_level
+        elif current_level > prior_level:
+            # The same source can legitimately pass a higher milestone later.
+            self._hash_levels[h] = current_level
+        self._last_hash = h
 
         if current_level >= self.best_level:
             self.best_level = current_level
             self.best_code = code
             self.best_round = round_num
 
+        if repeated_after_other and current_level <= prior_level:
+            return True, "OSCILLATION: candidate returned after another repair attempt."
+        if prior_level is not None:
+            if current_level > prior_level:
+                return False, "DUPLICATE_SOURCE: higher milestone recorded."
+            return False, "DUPLICATE_SOURCE: milestone already recorded."
         return False, "PROGRESS_NORMAL"
 
     def get_best_deliverable(self, final_code: str, final_level: int) -> Tuple[str, int]:
