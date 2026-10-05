@@ -26,6 +26,7 @@ class DiffPatcher:
         Returns: (success, result_code_or_original, log_message)
         """
         original_code = original_code.replace("\r\n", "\n")
+        had_final_newline = original_code.endswith("\n")
         patch_text = patch_text.replace("\r\n", "\n")
         matches = list(cls.SEARCH_REPLACE_PATTERN.finditer(patch_text))
         if not matches:
@@ -72,11 +73,25 @@ class DiffPatcher:
 
             if matched_idx != -1:
                 leading_indent = re.match(r"^\s*", lines[matched_idx]).group(0)
-                rep_lines = [leading_indent + l if l.strip() else "" for l in replace_block.splitlines()]
+                raw_rep_lines = replace_block.splitlines()
+                first_rep = next((line for line in raw_rep_lines if line.strip()), "")
+                rep_base = re.match(r"^\s*", first_rep).group(0)
+                rep_lines = []
+                for line in raw_rep_lines:
+                    if not line.strip():
+                        rep_lines.append("")
+                        continue
+                    # Keep indentation relative to the replacement block's
+                    # first line, then anchor the block at the matched line.
+                    line_indent = re.match(r"^\s*", line).group(0)
+                    relative = line_indent[len(rep_base):] if line_indent.startswith(rep_base) else line_indent
+                    rep_lines.append(leading_indent + relative + line[len(line_indent):])
                 new_lines = lines[:matched_idx] + rep_lines + lines[matched_idx + matched_len :]
                 working_code = "\n".join(new_lines)
                 applied_count += 1
             else:
                 return False, original_code, f"Failed to locate SEARCH block #{idx+1} in source code."
 
+        if had_final_newline and not working_code.endswith("\n"):
+            working_code += "\n"
         return True, working_code, f"Successfully applied {applied_count} surgical patch blocks."
