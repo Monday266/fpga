@@ -167,7 +167,10 @@ class RtlToolchain:
             if rc != 0:
                 return 1, summarize_log(out)
 
-            rc, out2 = _run([self.xelab or "xelab", top, "-s", "dut_snapshot"], work, timeout_s)
+            rc, out2 = _run(
+                [self.xelab or "xelab", top, "-s", "dut_snapshot", "-timescale", "1ps/1ps"],
+                work, timeout_s,
+            )
             return (0 if rc == 0 else 1), summarize_log(out + "\n" + out2)
         finally:
             if os.environ.get("AGENT_KEEP_WORK") != "1":
