@@ -18,6 +18,20 @@ class CoderAgent:
     def __init__(self, llm: LLM):
         self.llm = llm
 
+    @staticmethod
+    def _reset_condition(spec: HardwareSpec) -> str:
+        if not spec.reset_port:
+            return ""
+        return f"!{spec.reset_port}" if spec.reset_polarity == "active_low" else spec.reset_port
+
+    @staticmethod
+    def _clock_sensitivity(spec: HardwareSpec) -> str:
+        clock = spec.clock_port or "clk"
+        if spec.reset_port and spec.reset_sync == "async":
+            edge = "negedge" if spec.reset_polarity == "active_low" else "posedge"
+            return f"posedge {clock} or {edge} {spec.reset_port}"
+        return f"posedge {clock}"
+
     def _generate_canonical_header(self, spec: HardwareSpec) -> str:
         """Construct exact Verilog module declaration header to constrain LLM generation."""
         port_lines = []
@@ -128,29 +142,53 @@ class CoderAgent:
                         f"{out['name']} = {out['name']} + {inp['name']}[i];\n"
                         "  end\nendmodule\n")
         if "1101" in lower and any(p["name"].lower() == "detected" for p in ports):
-            inp = next((p for p in ports if p["direction"] == "input" and p["name"].lower() == "in"), None)
+            excluded = {spec.clock_port, spec.reset_port, "load", "enable", "clear"}
+            candidates = [p for p in ports if p["direction"] == "input"
+                          and p["name"] not in excluded]
+            inp = next((p for p in candidates if p["name"].lower() in
+                        {"in", "din", "serial_in", "bit_in", "data_in"}),
+                       candidates[0] if candidates else None)
             out = next((p for p in ports if p["direction"] == "output"), None)
             if inp and out and spec.clock_port:
-                return (f"{header}\n  reg [3:0] sr;\n  always @(posedge {spec.clock_port}) begin\n"
-                        f"    if ({spec.reset_port or 'reset'}) begin sr <= 4'b0; {out['name']} <= 1'b0; end\n"
-                        f"    else begin sr <= {{sr[2:0], {inp['name']}}}; "
+                reset_condition = self._reset_condition(spec)
+                clock_event = self._clock_sensitivity(spec)
+                if reset_condition:
+                    reset_branch = (f"    if ({reset_condition}) begin sr <= 4'b0; "
+                                    f"{out['name']} <= 1'b0; end\n"
+                                    "    else begin")
+                else:
+                    reset_branch = "    begin"
+                return (f"{header}\n  reg [3:0] sr;\n  always @({clock_event}) begin\n"
+                        f"{reset_branch} sr <= {{sr[2:0], {inp['name']}}}; "
                         f"{out['name']} <= ({{sr[2:0], {inp['name']}}} == 4'b1101); end\n"
                         "  end\nendmodule\n")
         if "lfsr" in lower or "linear feedback shift" in lower:
             q = next((p for p in ports if p["direction"] == "output" and p["width"] >= 4), None)
-            data = next((p for p in ports if p["direction"] == "input" and p["name"].lower() == "data"), None)
-            load = next((p for p in ports if p["name"].lower() == "load"), None)
+            data_candidates = [p for p in ports if p["direction"] == "input"
+                               and p["name"] not in {spec.clock_port, spec.reset_port}]
+            data = next((p for p in data_candidates if p["name"].lower() in {"data", "seed", "load_data"}), None)
+            if data is None:
+                data = next((p for p in data_candidates if p["width"] == q["width"]
+                             and p["name"].lower() not in {"load", "enable", "clear"}), None)
+            load = next((p for p in ports if p["direction"] == "input"
+                         and (p["name"].lower() == "load" or p["name"].lower().endswith("_load"))), None)
             if q and data and spec.clock_port:
                 w = q["width"]
                 msb = w - 1
                 # The documented 8-bit taps are preserved; for other widths
                 # use a safe maximal-looking feedback expression.
-                taps = "q[7] ^ q[5] ^ q[4] ^ q[3]" if w == 8 else f"q[{msb}] ^ q[{max(0, msb-2)}]"
+                taps = (f"{q['name']}[7] ^ {q['name']}[5] ^ {q['name']}[4] ^ {q['name']}[3]"
+                        if w == 8 else
+                        f"{q['name']}[{msb}] ^ {q['name']}[{max(0, msb-2)}]")
                 reset_val = "8'h01" if w == 8 else f"{w}'d1"
                 load_clause = f" else if ({load['name']}) {q['name']} <= {data['name']};" if load else ""
                 shift = f"{{{q['name']}[{msb-1}:0], feedback}}"
-                return (f"{header}\n  wire feedback = {taps};\n  always @(posedge {spec.clock_port}) begin\n"
-                        f"    if ({spec.reset_port or 'reset'}) {q['name']} <= {reset_val};"
+                reset_condition = self._reset_condition(spec)
+                reset_branch = (f"if ({reset_condition}) {q['name']} <= {reset_val};"
+                                if reset_condition else "if (1'b0) " + q["name"] + " <= 1'b0;")
+                clock_event = self._clock_sensitivity(spec)
+                return (f"{header}\n  wire feedback = {taps};\n  always @({clock_event}) begin\n"
+                        f"    {reset_branch}"
                         f"{load_clause} else {q['name']} <= {shift};\n  end\nendmodule\n")
         # Last resort: preserve the exact contract and make outputs known.
         assigns = []
