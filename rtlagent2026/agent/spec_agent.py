@@ -9,6 +9,7 @@ control signal priority ladders, and verification stimulus intent.
 from __future__ import annotations
 
 import json
+import re
 from .llm import LLM, extract_json
 from .tools import parse_interface_contract
 
@@ -116,6 +117,13 @@ class SpecAgent:
         # 1. Deterministic port baseline extraction
         fallback_top, fallback_ports, interface_authoritative = parse_interface_contract(interface, prompt)
         fb_port_list = [{"name": n, "direction": d, "width": w} for d, w, n in fallback_ports]
+        # RTL evaluation prompts carry the contract in a bullet list when
+        # interface.txt is intentionally empty.  Treat that structured list as
+        # authoritative too; otherwise a model that hallucinates one extra
+        # port can make the guard validate the wrong interface and cause L0.
+        prompt_has_port_list = bool(re.search(
+            r"(?mi)^\s*[-*]\s*(?:input|output|inout)\b", prompt or ""
+        ))
 
         sys_prompt = (
             "You are a Principal Digital Hardware Architect and ASIC/FPGA Verification Specialist. "
@@ -192,8 +200,10 @@ class SpecAgent:
         # Force module name and port reconciliation against deterministic extraction if available
         if fallback_top:
             parsed["module_name"] = fallback_top
-        if fb_port_list and (interface_authoritative or len(fb_port_list) >= len(parsed.get("ports", []))):
-            # If deterministic extraction caught all ports, ensure no missing ports
+        if fb_port_list and (interface_authoritative or prompt_has_port_list):
+            # The explicit interface source is safer than an LLM's inferred
+            # port list, including when the model returned extra hallucinated
+            # ports rather than merely omitting one.
             parsed["ports"] = fb_port_list
 
         # Reconcile sequential vs combinational
