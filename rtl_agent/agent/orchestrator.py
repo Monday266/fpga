@@ -120,6 +120,16 @@ class MultiAgentOrchestrator:
                 )
                 continue
 
+            # --- STAGE 0.5: deterministic synthesizability preflight ---
+            rc_pre, log_pre = self.tools.preflight(current_code, spec.module_name)
+            trace.log(tool="preflight", round=rnd, rc=rc_pre, excerpt=log_pre[:500])
+            if rc_pre != 0:
+                matched_skills = select_skills(self.skills, log_pre, "synthesis", "non-synthesizable")
+                current_code = self.repair_agent.repair(
+                    spec, current_code, "preflight", log_pre, matched_skills, force_full_rewrite=False
+                )
+                continue
+
             # Record Level 1 milestone candidate
             self.quality.record_attempt(current_code, current_level=1, round_num=rnd)
 

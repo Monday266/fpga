@@ -116,9 +116,42 @@ class RtlToolchain:
     def available(self) -> bool:
         return not self.reason
 
+    # -------------------------------------------------------- zero-cost preflight
+    def preflight(self, source: str, top: str) -> tuple[int, str]:
+        """Reject obvious non-RTL artifacts before invoking Vivado.
+
+        This is the deterministic left edge of the tool loop.  It implements
+        the synthesis-latch skill's hard restrictions and catches a model that
+        accidentally returned a testbench or an explanation wrapped around the
+        module.  It deliberately does not try to prove functional correctness.
+        """
+        if not source or not source.strip():
+            return 1, "PREFLIGHT: empty RTL source"
+        clean = re.sub(r"//[^\n]*", "", source)
+        clean = re.sub(r"/\*.*?\*/", "", clean, flags=re.DOTALL)
+        if not re.search(rf"\bmodule\s+{re.escape(top)}\b", clean):
+            return 1, f"PREFLIGHT: top module '{top}' was not found"
+        if not re.search(r"\bendmodule\b", clean):
+            return 1, "PREFLIGHT: missing endmodule"
+        forbidden = [
+            (r"\binitial\b", "initial block"),
+            (r"\$finish\b", "$finish"),
+            (r"\$display\b", "$display"),
+            (r"\b(?:real|time)\b", "simulation-only scalar"),
+            (r"#\s*\d", "delay control"),
+            (r"\bfork\b|\bjoin\b", "fork/join"),
+        ]
+        for pattern, label in forbidden:
+            if re.search(pattern, clean, re.IGNORECASE):
+                return 1, f"PREFLIGHT: non-synthesizable {label} in DUT"
+        return 0, "PREFLIGHT: synthesizable source shape accepted"
+
     # ------------------------------------------------------------- L1: lint
     def lint(self, source: str, top: str, timeout_s: float = 120.0) -> tuple[int, str]:
         """Verify DUT parses and elaborates without testbench."""
+        rc_pre, log_pre = self.preflight(source, top)
+        if rc_pre != 0:
+            return rc_pre, log_pre
         if not self.available:
             return -1, f"vivado unavailable: {self.reason}"
 

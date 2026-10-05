@@ -288,4 +288,16 @@ endmodule
         """Execute self-checking simulation and report verdict."""
         tb_code = self.build_testbench(spec, prompt, dut_code)
         rc, log = self.tools.run_sim(dut_code, tb_code, tb_top="tb_self_check", timeout_s=timeout_s)
+        # A model-generated testbench can be syntactically invalid even when
+        # the DUT passed L1.  Retry once with the deterministic skill-backed
+        # testbench before asking the repair model to change correct RTL.
+        if rc != 0 and ("TB compilation failed" in log or "TB elaboration failed" in log):
+            fallback_tb = self._fallback_tb(spec, prompt)
+            if fallback_tb and fallback_tb != tb_code:
+                rc_fallback, log_fallback = self.tools.run_sim(
+                    dut_code, fallback_tb, tb_top="tb_self_check", timeout_s=timeout_s
+                )
+                if rc_fallback == 0:
+                    return 0, "Generated TB rejected; deterministic fallback passed.\n" + log_fallback
+                return rc_fallback, log + "\nFallback TB result:\n" + log_fallback
         return rc, log

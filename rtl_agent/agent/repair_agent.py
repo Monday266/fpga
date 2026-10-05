@@ -57,6 +57,11 @@ class RepairAgent:
                 "- FIX FOCUS (Synthesis): Prevent latches (Synth 8-327) by assigning default "
                 "values to all outputs at line 1 of every always @(*) block and adding default: in case statements."
             )
+        elif stage == "preflight":
+            return (
+                "- FIX FOCUS (Preflight): remove testbench-only constructs from the DUT "
+                "(initial, delays, $display/$finish, real/time, fork/join) while preserving the module contract."
+            )
         return "- FIX FOCUS: Reconcile code with the formal hardware specification."
 
     def _repair_diff(
