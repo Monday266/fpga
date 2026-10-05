@@ -21,7 +21,9 @@ PART = os.environ.get("RTL_PART", "xczu3eg-sbva484-1-e")
 
 
 def _scratch_dir() -> str | None:
-    d = os.environ.get("AGENT_SCRATCH")
+    # Official runners expose EDA_TMP on node-local storage.  Keep the
+    # project-specific override first for tests and parallel workers.
+    d = os.environ.get("AGENT_SCRATCH") or os.environ.get("EDA_TMP")
     if d:
         os.makedirs(d, exist_ok=True)
         return d
