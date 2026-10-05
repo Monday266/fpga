@@ -20,6 +20,31 @@ class VerifierAgent:
         self.llm = llm
         self.tools = toolchain
 
+    @staticmethod
+    def _sequence_input(spec: HardwareSpec):
+        excluded = {spec.clock_port, spec.reset_port, "load", "enable", "clear"}
+        candidates = [p for p in spec.ports if p["direction"] == "input"
+                      and p["name"] not in excluded]
+        return next((p for p in candidates if p["name"].lower() in
+                     {"in", "din", "serial_in", "bit_in", "data_in"}),
+                    candidates[0] if candidates else None)
+
+    @staticmethod
+    def _lfsr_data(spec: HardwareSpec, width: int):
+        candidates = [p for p in spec.ports if p["direction"] == "input"
+                      and p["name"] not in {spec.clock_port, spec.reset_port}]
+        preferred = next((p for p in candidates
+                          if p["name"].lower() in {"data", "seed", "load_data"}), None)
+        if preferred:
+            return preferred
+        return next((p for p in candidates if p["width"] == width
+                     and p["name"].lower() not in {"load", "enable", "clear"}), None)
+
+    @staticmethod
+    def _lfsr_load(spec: HardwareSpec):
+        return next((p for p in spec.ports if p["direction"] == "input"
+                     and (p["name"].lower() == "load" or p["name"].lower().endswith("_load"))), None)
+
     def build_testbench(self, spec: HardwareSpec, prompt: str, dut_code: str) -> str:
         """Synthesize a companion self-checking testbench (tb_self_check.sv) with Golden Scoreboard."""
         sys_prompt = (
@@ -84,7 +109,8 @@ class VerifierAgent:
         lower = (prompt or "").lower()
         if "population count" in lower or "popcount" in lower:
             return self._fallback_popcount_tb(spec)
-        if "1101" in lower and any(p["name"].lower() == "detected" for p in spec.ports):
+        if "1101" in lower and ("sequence" in lower or
+                                any(p["name"].lower() == "detected" for p in spec.ports)):
             return self._fallback_sequence_tb(spec)
         if "lfsr" in lower or "linear feedback shift" in lower:
             return self._fallback_lfsr_tb(spec)
@@ -210,23 +236,28 @@ endmodule
     @staticmethod
     def _fallback_sequence_tb(spec: HardwareSpec) -> str:
         clk = spec.clock_port or "clk"
-        rst = spec.reset_port or "reset"
-        active_rst = rst if spec.reset_polarity != "active_low" else f"!{rst}"
-        rst_initial = "1" if spec.reset_polarity != "active_low" else "0"
-        rst_inactive = "0" if spec.reset_polarity != "active_low" else "1"
-        inp = next((p for p in spec.ports if p["direction"] == "input" and p["name"].lower() == "in"), None)
+        rst = spec.reset_port
+        active_rst = (rst if spec.reset_polarity != "active_low" else f"!{rst}") if rst else "1'b0"
+        rst_initial = ("1" if spec.reset_polarity != "active_low" else "0") if rst else "0"
+        rst_inactive = ("0" if spec.reset_polarity != "active_low" else "1") if rst else "0"
+        inp = VerifierAgent._sequence_input(spec)
         out = next((p for p in spec.ports if p["direction"] == "output"), None)
         if not inp or not out:
             return ""
+        out_w = out["width"]
+        out_decl = f"[{out_w-1}:0] " if out_w > 1 else ""
+        rst_decl = f", {rst} = {rst_initial}" if rst else ""
+        rst_conn = f", .{rst}({rst})" if rst else ""
+        reset_release = f"; @(negedge {clk}); {rst} = {rst_inactive}" if rst else ""
         return f'''`timescale 1ns/1ps
 module tb_self_check();
-  reg {clk} = 0, {rst} = {rst_initial}, {inp["name"]} = 0;
-  wire {out["name"]};
+  reg {clk} = 0{rst_decl}, {inp["name"]} = 0;
+  wire {out_decl}{out["name"]};
   reg [3:0] model = 0;
   reg [3:0] next_model;
   integer errors = 0;
   always #2.5 {clk} = ~{clk};
-  {spec.module_name} dut (.{clk}({clk}), .{rst}({rst}), .{inp["name"]}({inp["name"]}), .{out["name"]}({out["name"]}));
+  {spec.module_name} dut (.{clk}({clk}){rst_conn}, .{inp["name"]}({inp["name"]}), .{out["name"]}({out["name"]}));
   task drive(input reg b);
     begin @(negedge {clk}); {inp["name"]} = b; @(posedge {clk}); #1;
       if ({active_rst}) begin next_model = 0; model = 0; end
@@ -237,7 +268,7 @@ module tb_self_check();
     end
   endtask
   initial begin
-    repeat (2) @(posedge {clk}); @(negedge {clk}); {rst} = {rst_inactive};
+    repeat (2) @(posedge {clk}){reset_release};
     drive(1); drive(1); drive(0); drive(1); drive(1); drive(0); drive(1);
     if (errors == 0) $display("TB_SUCCESS: All self-tests passed with 0 errors.");
     else $display("TB_FAILURE: Total %0d mismatches.", errors);
@@ -254,27 +285,35 @@ endmodule
         active_rst = rst if spec.reset_polarity != "active_low" else f"!{rst}"
         rst_initial = "1" if spec.reset_polarity != "active_low" else "0"
         rst_inactive = "0" if spec.reset_polarity != "active_low" else "1"
-        load = next((p for p in spec.ports if p["name"].lower() == "load"), None)
-        data = next((p for p in spec.ports if p["name"].lower() == "data"), None)
         out = next((p for p in spec.ports if p["direction"] == "output"), None)
+        load = VerifierAgent._lfsr_load(spec)
+        data = VerifierAgent._lfsr_data(spec, out["width"] if out else 0)
         if not out or not data or not load:
             return ""
+        width = out["width"]
+        if width == 1:
+            feedback = "model[0]"
+            shift = "{model[0]}"
+        else:
+            feedback = f"model[{width - 1}] ^ model[{max(0, width - 3)}]"
+            shift = f"{{model[{width - 2}:0], {feedback}}}"
+        data_value = f"{data['width']}'hA5"
         return f'''`timescale 1ns/1ps
 module tb_self_check();
   reg {clk} = 0, {rst} = {rst_initial}, {load["name"]} = 0;
   reg [{data["width"]-1}:0] {data["name"]} = 0;
   wire [{out["width"]-1}:0] {out["name"]};
-  reg [7:0] model = 0;
+  reg [{out["width"]-1}:0] model = 0;
   integer errors = 0;
   always #2.5 {clk} = ~{clk};
   {spec.module_name} dut (.{clk}({clk}), .{rst}({rst}), .{load["name"]}({load["name"]}), .{data["name"]}({data["name"]}), .{out["name"]}({out["name"]}));
   task check; begin @(posedge {clk}); #1;
-    if ({active_rst}) model = 8'h01; else if ({load["name"]}) model = {data["name"]};
-    else model = {{model[6:0], model[7] ^ model[5] ^ model[4] ^ model[3]}};
+    if ({active_rst}) model = {width}'d1; else if ({load["name"]}) model = {data["name"]};
+    else model = {shift};
     if ({out["name"]} !== model) begin $display("TB_FAILURE: DUT=%h EXP=%h", {out["name"]}, model); errors = errors + 1; end
   end endtask
   initial begin
-    repeat (2) check; @(negedge {clk}); {rst}={rst_inactive}; {load["name"]}=1; {data["name"]}=8'hA5; check;
+    repeat (2) check; @(negedge {clk}); {rst}={rst_inactive}; {load["name"]}=1; {data["name"]}={data_value}; check;
     @(negedge {clk}); {load["name"]}=0; check; check;
     if (errors == 0) $display("TB_SUCCESS: All self-tests passed with 0 errors.");
     else $display("TB_FAILURE: Total %0d mismatches.", errors);
