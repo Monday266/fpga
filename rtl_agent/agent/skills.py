@@ -175,8 +175,23 @@ def select_skills(skills: list[Skill], *context: str, limit: int = 2) -> list[Sk
     planner/tool separation used by modern coding agents: one skill explains
     the failure and one supplies the safe implementation pattern.
     """
+    context_text = " ".join(x.lower() for x in context if x)
     scored = [(s, s.relevance_score(*context)) for s in skills]
     scored = [item for item in scored if item[1] > 0]
+    # Explicit architecture intent outranks incidental words in prose.  For
+    # example, a combinational popcount prompt often says "no clock"; that
+    # must not make the clock/reset skill outrank bit-width guidance.
+    mode_boost = {
+        "combinational_tree": {"rtl-arithmetic-truncation": 30, "rtl-synthesis-latch-prevention": 8},
+        "shift_register": {"rtl-shift-register-pattern": 30, "rtl-control-priority-pattern": 12},
+        "three_process_fsm": {"rtl-fsm-idioms": 30, "rtl-clock-reset-conventions": 10},
+        "counter": {"rtl-control-priority-pattern": 15, "rtl-arithmetic-truncation": 12},
+    }
+    for idx, (skill, score) in enumerate(scored):
+        for mode, boosts in mode_boost.items():
+            if mode in context_text:
+                scored[idx] = (skill, score + boosts.get(skill.name, 0))
+                break
     scored.sort(key=lambda x: (-x[1], x[0].name))
     selected: list[Skill] = []
     for skill, _score in scored:
