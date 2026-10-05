@@ -281,14 +281,14 @@ endmodule
     @staticmethod
     def _fallback_lfsr_tb(spec: HardwareSpec) -> str:
         clk = spec.clock_port or "clk"
-        rst = spec.reset_port or "reset"
-        active_rst = rst if spec.reset_polarity != "active_low" else f"!{rst}"
-        rst_initial = "1" if spec.reset_polarity != "active_low" else "0"
-        rst_inactive = "0" if spec.reset_polarity != "active_low" else "1"
+        rst = spec.reset_port
+        active_rst = (rst if spec.reset_polarity != "active_low" else f"!{rst}") if rst else "1'b0"
+        rst_initial = ("1" if spec.reset_polarity != "active_low" else "0") if rst else "0"
+        rst_inactive = ("0" if spec.reset_polarity != "active_low" else "1") if rst else "0"
         out = next((p for p in spec.ports if p["direction"] == "output"), None)
         load = VerifierAgent._lfsr_load(spec)
         data = VerifierAgent._lfsr_data(spec, out["width"] if out else 0)
-        if not out or not data or not load:
+        if not out or (load and not data):
             return ""
         width = out["width"]
         if width == 1:
@@ -300,24 +300,44 @@ endmodule
         else:
             feedback = f"model[{width - 1}] ^ model[{max(0, width - 3)}]"
             shift = f"{{model[{width - 2}:0], {feedback}}}"
-        data_value = f"{data['width']}'hA5"
+        data_value = f"{data['width']}'hA5" if data else "0"
+        declarations = [f"reg {clk} = 0;"]
+        if rst:
+            declarations.append(f"reg {rst} = {rst_initial};")
+        if load:
+            declarations.append(f"reg {load['name']} = 0;")
+        if data:
+            declarations.append(f"reg [{data['width']-1}:0] {data['name']} = 0;")
+        reset_conn = f", .{rst}({rst})" if rst else ""
+        load_conn = f", .{load['name']}({load['name']})" if load else ""
+        data_conn = f", .{data['name']}({data['name']})" if data else ""
+        if rst and load and data:
+            model_logic = (f"if ({active_rst}) model = {width}'d1; else "
+                           f"if ({load['name']}) model = {data['name']}; else model = {shift};")
+        elif rst:
+            model_logic = f"if ({active_rst}) model = {width}'d1; else model = {shift};"
+        elif load and data:
+            model_logic = f"if ({load['name']}) model = {data['name']}; else model = {shift};"
+        else:
+            model_logic = f"model = {shift};"
+        release_reset = (f" @(negedge {clk}); {rst}={rst_inactive};" if rst else "")
+        load_drive = (f" {load['name']}=1; {data['name']}={data_value};" if load else "")
+        clear_load = f" @(negedge {clk}); {load['name']}=0;" if load else ""
         return f'''`timescale 1ns/1ps
 module tb_self_check();
-  reg {clk} = 0, {rst} = {rst_initial}, {load["name"]} = 0;
-  reg [{data["width"]-1}:0] {data["name"]} = 0;
+  {' '.join(declarations)}
   wire [{out["width"]-1}:0] {out["name"]};
   reg [{out["width"]-1}:0] model = 0;
   integer errors = 0;
   always #2.5 {clk} = ~{clk};
-  {spec.module_name} dut (.{clk}({clk}), .{rst}({rst}), .{load["name"]}({load["name"]}), .{data["name"]}({data["name"]}), .{out["name"]}({out["name"]}));
+  {spec.module_name} dut (.{clk}({clk}){reset_conn}{load_conn}{data_conn}, .{out["name"]}({out["name"]}));
   task check; begin @(posedge {clk}); #1;
-    if ({active_rst}) model = {width}'d1; else if ({load["name"]}) model = {data["name"]};
-    else model = {shift};
+    {model_logic}
     if ({out["name"]} !== model) begin $display("TB_FAILURE: DUT=%h EXP=%h", {out["name"]}, model); errors = errors + 1; end
   end endtask
   initial begin
-    repeat (2) check; @(negedge {clk}); {rst}={rst_inactive}; {load["name"]}=1; {data["name"]}={data_value}; check;
-    @(negedge {clk}); {load["name"]}=0; check; check;
+    repeat (2) check;{release_reset}{load_drive} check;
+    {clear_load} check; check;
     if (errors == 0) $display("TB_SUCCESS: All self-tests passed with 0 errors.");
     else $display("TB_FAILURE: Total %0d mismatches.", errors);
     $finish;
