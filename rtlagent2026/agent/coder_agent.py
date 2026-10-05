@@ -9,6 +9,7 @@ to Vivado rules and the AMD target part (xczu3eg-sbva484-1-e, 5ns clock).
 from __future__ import annotations
 
 import re
+import os
 from .llm import LLM, extract_code
 from .skills import Skill
 from .spec_agent import HardwareSpec
@@ -119,7 +120,25 @@ class CoderAgent:
             code = ""
         if code and re.search(r"\bmodule\s+[A-Za-z_]\w*\b", code) and "endmodule" in code:
             return code
-        return self._fallback_code(spec, prompt)
+        # Pattern-specific RTL is useful for the offline mock smoke tests, but
+        # using it after a real model failure would make the submitted agent
+        # produce benchmark-shaped answers without a substantive model call.
+        # Keep that path development-only so the competition artifact remains
+        # within the no-hardcoded-answer rule.
+        if self._allow_deterministic_fallback():
+            return self._fallback_code(spec, prompt)
+        return ""
+
+    def _allow_deterministic_fallback(self) -> bool:
+        """Return whether pattern-specific fallback RTL is safe to use.
+
+        The bundled mock backend exists for contract and smoke testing.  A
+        real submission backend must never silently turn an unavailable or
+        malformed model response into a task-shaped answer.
+        """
+        return self.llm.backend == "mock" and os.environ.get(
+            "AGENT_ALLOW_DETERMINISTIC_FALLBACK", "1"
+        ).strip().lower() not in {"0", "false", "no", "off"}
 
     def _fallback_code(self, spec: HardwareSpec, prompt: str) -> str:
         """Produce a small synthesizable fallback when the model is unavailable.

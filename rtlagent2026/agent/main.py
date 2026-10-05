@@ -53,23 +53,34 @@ def main(argv: list[str] | None = None) -> int:
         try:
             prompt, interface = read_task(args.input)
             # Build the fallback spec without contacting the model.  This path
-            # is intentionally available when the local endpoint is down or
-            # returns malformed JSON.
-            top, raw_ports, _ = parse_interface_contract(interface, prompt)
-            ports = [{"name": n, "direction": d, "width": w} for d, w, n in raw_ports]
-            names = {p["name"].lower() for p in ports}
-            sequential = any(n in names for n in ("clk", "clock"))
-            fallback_spec = HardwareSpec({
-                "module_name": args.top.strip() or top or "TopModule",
-                "ports": ports,
-                "is_sequential": sequential,
-                "clock_port": next((p["name"] for p in ports if p["name"].lower() in ("clk", "clock")), ""),
-                "reset_port": next((p["name"] for p in ports if p["name"].lower() in ("reset", "rst", "reset_n", "rst_n")), ""),
-                "reset_polarity": "active_low" if any(p["name"].lower() in ("rst_n", "reset_n") for p in ports) else "active_high",
-                "reset_sync": "sync",
-            })
-            code = CoderAgent(LLM())._fallback_code(fallback_spec, prompt)
-            trace.log(tool="agent", event="fallback_solution", bytes=len(code))
+            # is intentionally available only for the offline mock backend.
+            # A real submission must not synthesize a task-shaped answer after
+            # a model failure, because that would bypass the model call.
+            fallback_llm = LLM()
+            if fallback_llm.backend != "mock":
+                trace.log(
+                    tool="agent",
+                    event="fallback_suppressed",
+                    reason="deterministic_fallback_disabled_for_real_backend",
+                    backend=fallback_llm.backend,
+                )
+                code = ""
+            else:
+                top, raw_ports, _ = parse_interface_contract(interface, prompt)
+                ports = [{"name": n, "direction": d, "width": w} for d, w, n in raw_ports]
+                names = {p["name"].lower() for p in ports}
+                sequential = any(n in names for n in ("clk", "clock"))
+                fallback_spec = HardwareSpec({
+                    "module_name": args.top.strip() or top or "TopModule",
+                    "ports": ports,
+                    "is_sequential": sequential,
+                    "clock_port": next((p["name"] for p in ports if p["name"].lower() in ("clk", "clock")), ""),
+                    "reset_port": next((p["name"] for p in ports if p["name"].lower() in ("reset", "rst", "reset_n", "rst_n")), ""),
+                    "reset_polarity": "active_low" if any(p["name"].lower() in ("rst_n", "reset_n") for p in ports) else "active_high",
+                    "reset_sync": "sync",
+                })
+                code = CoderAgent(fallback_llm)._fallback_code(fallback_spec, prompt)
+                trace.log(tool="agent", event="fallback_solution", bytes=len(code))
         except Exception as fallback_exc:
             trace.log(tool="agent", event="fallback_exception", error=f"{type(fallback_exc).__name__}: {fallback_exc}"[:400])
     finally:
