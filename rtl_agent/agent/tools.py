@@ -191,7 +191,10 @@ class RtlToolchain:
                 return 1, "TB compilation failed:\n" + summarize_log(out1)
 
             # 2. Elaborate
-            rc, out2 = _run([self.xelab or "xelab", tb_top, "-s", "sim_snap"], work, timeout_s / 3)
+            rc, out2 = _run(
+                [self.xelab or "xelab", tb_top, "-s", "sim_snap", "-timescale", "1ps/1ps"],
+                work, timeout_s / 3,
+            )
             if rc != 0:
                 return 1, "TB elaboration failed:\n" + summarize_log(out1 + "\n" + out2)
 
