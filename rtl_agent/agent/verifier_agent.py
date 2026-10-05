@@ -63,7 +63,7 @@ class VerifierAgent:
 
         try:
             res = self.llm.chat(messages, temperature=0.1, max_tokens=2048)
-            tb_code = extract_code(res.text)
+            tb_code = extract_code(res.text, module_name="tb_self_check")
         except Exception:
             tb_code = ""
         if not self._is_usable_testbench(tb_code, spec):

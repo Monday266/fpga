@@ -90,9 +90,19 @@ class LLM:
 
         body = resp.json()
         try:
-            text = body["choices"][0]["message"]["content"] or ""
+            content = body["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError) as exc:
             raise LLMError(f"unexpected response shape: {body}") from exc
+
+        # Some OpenAI-compatible local servers return content parts instead of
+        # one string when reasoning or structured output is enabled.
+        if isinstance(content, list):
+            text = "".join(
+                part.get("text", "") if isinstance(part, dict) else str(part)
+                for part in content
+            )
+        else:
+            text = str(content)
 
         usage = body.get("usage") or {}
         return LLMResult(
@@ -204,19 +214,28 @@ class LLM:
         return LLMResult(text=f"```verilog\n{stub}\n```", tokens_in=120, tokens_out=60)
 
 
-def extract_code(text: str, tag: str = "verilog") -> str:
-    """Extract code block matching the specified language or fallback to raw module."""
-    m = re.search(rf"```{tag}?\s*(.*?)```", text, re.IGNORECASE | re.DOTALL)
-    if m:
-        return m.group(1).strip() + "\n"
-    # Fallback: look for ```sv or ```anything
-    m = re.search(r"```(?:\w+)?\s*(.*?)```", text, re.DOTALL)
-    if m:
-        return m.group(1).strip() + "\n"
-    # Fallback: find module ... endmodule
-    m = re.search(r"\b(module\s+\w+\b.*?endmodule)", text, re.DOTALL)
-    if m:
-        return m.group(1).strip() + "\n"
+def extract_code(text: str, tag: str = "verilog", module_name: str | None = None) -> str:
+    """Extract one requested RTL artifact from a model response.
+
+    ``module_name`` prevents a response containing both a DUT and a sample
+    testbench from selecting the wrong fenced block.  The old API remains
+    compatible for callers that do not know the expected top name.
+    """
+    text = text or ""
+    candidates = [m.group(1) for m in re.finditer(r"```(?:verilog|systemverilog|sv)?\s*(.*?)```", text, re.IGNORECASE | re.DOTALL)]
+    candidates.append(text)
+    for candidate in candidates:
+        if module_name:
+            m = re.search(
+                rf"\bmodule\s+{re.escape(module_name)}\b.*?\bendmodule\b",
+                candidate, re.IGNORECASE | re.DOTALL,
+            )
+            if m:
+                return m.group(0).strip() + "\n"
+        else:
+            m = re.search(r"\bmodule\s+\w+\b.*?\bendmodule\b", candidate, re.DOTALL)
+            if m:
+                return m.group(0).strip() + "\n"
     return ""
 
 

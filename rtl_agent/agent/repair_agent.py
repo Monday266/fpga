@@ -147,7 +147,7 @@ class RepairAgent:
 
         try:
             res = self.llm.chat(messages, temperature=0.0, max_tokens=2048)
-            fixed_code = extract_code(res.text)
+            fixed_code = extract_code(res.text, module_name=spec.module_name)
         except Exception:
             fixed_code = ""
         return fixed_code or broken_code

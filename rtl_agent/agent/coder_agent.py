@@ -100,7 +100,7 @@ class CoderAgent:
 
         try:
             res = self.llm.chat(messages, temperature=0.2, max_tokens=2048)
-            code = extract_code(res.text)
+            code = extract_code(res.text, module_name=spec.module_name)
         except Exception:
             code = ""
         if code and re.search(r"\bmodule\s+[A-Za-z_]\w*\b", code) and "endmodule" in code:
