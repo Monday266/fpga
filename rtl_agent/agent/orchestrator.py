@@ -13,6 +13,7 @@ Integrates:
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import time
 
@@ -37,8 +38,12 @@ class TraceLogger:
     def __init__(self, path: str):
         self.path = path
         self._fh = open(path, "w", encoding="utf-8")
+        self._seq = 0
 
     def log(self, **fields) -> None:
+        self._seq += 1
+        fields.setdefault("trace_schema", 1)
+        fields.setdefault("seq", self._seq)
         fields.setdefault("ts", round(time.time(), 3))
         self._fh.write(json.dumps(fields, ensure_ascii=False) + "\n")
         self._fh.flush()
@@ -77,6 +82,7 @@ class MultiAgentOrchestrator:
             llm=self.llm.describe(),
             vivado_available=self.tools.available,
             skills_loaded=[s.name for s in self.skills],
+            budget={"deadline_s": DEADLINE_S, "reserve_s": RESERVE_S, "max_rounds": MAX_ROUNDS},
         )
 
         # ------------------------------------------------ Phase 1: Spec Architect
@@ -96,6 +102,7 @@ class MultiAgentOrchestrator:
         # first draft, where they have the largest effect on pass@1.
         initial_skills = select_skills(self.skills, "initial", prompt, spec.core_logic_summary,
                                        spec.recommended_pattern, " ".join(spec.control_priorities))
+        trace.log(tool="skill_selector", phase="initial", selected=[s.name for s in initial_skills])
         current_code = self.coder_agent.generate(spec, prompt, initial_skills)
         trace.log(
             tool="rtl_coder",
@@ -111,10 +118,13 @@ class MultiAgentOrchestrator:
 
             # --- STAGE 0: Shift-Left Deterministic Contract Guard ---
             ok_if, msg_if, current_code = self.guard.enforce_contract(current_code, spec.module_name, spec.ports)
-            trace.log(tool="check_interface", round=rnd, rc=(0 if ok_if else 1), excerpt=msg_if[:300])
+            trace.log(tool="check_interface", round=rnd, rc=(0 if ok_if else 1),
+                      code_sha256=hashlib.sha256(current_code.encode()).hexdigest()[:12], excerpt=msg_if[:300])
 
             if not ok_if:
                 matched_skills = select_skills(self.skills, msg_if, "VRFC 10-3180")
+                trace.log(tool="skill_selector", phase="interface_repair", round=rnd,
+                          selected=[s.name for s in matched_skills])
                 current_code = self.repair_agent.repair(
                     spec, current_code, "interface", msg_if, matched_skills, force_full_rewrite=True
                 )
@@ -125,6 +135,8 @@ class MultiAgentOrchestrator:
             trace.log(tool="preflight", round=rnd, rc=rc_pre, excerpt=log_pre[:500])
             if rc_pre != 0:
                 matched_skills = select_skills(self.skills, log_pre, "synthesis", "non-synthesizable")
+                trace.log(tool="skill_selector", phase="preflight_repair", round=rnd,
+                          selected=[s.name for s in matched_skills])
                 current_code = self.repair_agent.repair(
                     spec, current_code, "preflight", log_pre, matched_skills, force_full_rewrite=False
                 )
@@ -152,6 +164,8 @@ class MultiAgentOrchestrator:
 
             if rc_lint != 0:
                 matched_skills = select_skills(self.skills, clean_lint_log)
+                trace.log(tool="skill_selector", phase="lint_repair", round=rnd,
+                          selected=[s.name for s in matched_skills])
                 current_code = self.repair_agent.repair(
                     spec, current_code, "lint", clean_lint_log, matched_skills, force_full_rewrite=False
                 )
@@ -173,6 +187,8 @@ class MultiAgentOrchestrator:
             if rc_sim != 0:
                 is_osc, _ = self.quality.record_attempt(current_code, current_level=1, round_num=rnd)
                 matched_skills = select_skills(self.skills, clean_sim_log, "Mismatches", "ASSERTION")
+                trace.log(tool="skill_selector", phase="simulation_repair", round=rnd,
+                          selected=[s.name for s in matched_skills], oscillation=is_osc)
                 current_code = self.repair_agent.repair(
                     spec, current_code, "simulation", clean_sim_log, matched_skills, force_full_rewrite=is_osc
                 )
@@ -208,6 +224,8 @@ class MultiAgentOrchestrator:
 
             # Synthesis failure (latches, multi-driven nets, etc.)
             matched_skills = select_skills(self.skills, clean_synth_log, "Synth 8-327", "inferring latch")
+            trace.log(tool="skill_selector", phase="synthesis_repair", round=rnd,
+                      selected=[s.name for s in matched_skills])
             current_code = self.repair_agent.repair(
                 spec, current_code, "synthesis", clean_synth_log, matched_skills, force_full_rewrite=False
             )

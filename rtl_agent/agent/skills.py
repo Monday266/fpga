@@ -7,6 +7,43 @@ import re
 from typing import List
 
 
+# These aliases keep skill selection useful when the task uses natural
+# language rather than the exact log signature from a SKILL.md.  They encode
+# the same trigger vocabulary used by the RTL skills, without hard-coding a
+# solution for any particular benchmark item.
+_DOMAIN_ALIASES = {
+    "rtl-arithmetic-truncation": (
+        "popcount", "population", "bit count", "overflow", "underflow",
+        "truncat", "signed", "carry", "arithmetic", "count bits",
+    ),
+    "rtl-clock-reset-conventions": (
+        "clock", "clk", "posedge", "negedge", "reset", "rst", "asynchronous",
+        "synchronous", "clock domain",
+    ),
+    "rtl-control-priority-pattern": (
+        "priority", "load", "enable", "clear", "seed", "simultaneous",
+    ),
+    "rtl-fsm-idioms": (
+        "fsm", "state machine", "state transition", "finite state", "sequence",
+    ),
+    "rtl-golden-scoreboard-verifier": (
+        "scoreboard", "golden", "reference", "assertion", "mismatch", "self-check",
+    ),
+    "rtl-interface-contract": (
+        "interface", "module", "port", "topmodule", "xelab", "vrfc",
+    ),
+    "rtl-self-testbench-generator": (
+        "testbench", "xsim", "simulate", "simulation", "test vector", "waveform",
+    ),
+    "rtl-shift-register-pattern": (
+        "shift register", "lfsr", "linear feedback", "sequence detector", "overlap",
+    ),
+    "rtl-synthesis-latch-prevention": (
+        "latch", "synthesis", "synth", "multi-driven", "always @", "combinational",
+    ),
+}
+
+
 class Skill:
     def __init__(
         self,
@@ -33,12 +70,13 @@ class Skill:
         score = 0
         # 1. Exact signature hit (+10)
         for sig in self.signatures:
-            if sig.lower() in haystack:
+            sig = sig.strip().lower()
+            if sig and sig in haystack:
                 score += 10
 
         # 2. Trigger keywords (+5)
         if self.trigger:
-            for word in re.split(r"[,、\s]+", self.trigger.lower()):
+            for word in re.split(r"[,、;；/\s]+", self.trigger.lower()):
                 if len(word) >= 2 and word in haystack:
                     score += 5
 
@@ -52,6 +90,11 @@ class Skill:
             if len(token) >= 4 and token in haystack:
                 score += 1
 
+        # 5. Natural-language domain aliases (+3).  A single alias is enough
+        # to activate a skill, but repeated words do not swamp exact errors.
+        for alias in _DOMAIN_ALIASES.get(self.name, ()):
+            if alias in haystack:
+                score += 3
         return score
 
     def matches(self, *texts: str) -> bool:
@@ -125,8 +168,30 @@ def load_skills(skill_dir: str) -> list[Skill]:
 
 
 def select_skills(skills: list[Skill], *context: str, limit: int = 2) -> list[Skill]:
-    """Rank skills by relevance score and return top matches."""
+    """Rank skills by relevance and return a diverse, stable shortlist.
+
+    The first result is the strongest diagnosis match.  The second result is
+    selected from a different skill family when possible, which mirrors the
+    planner/tool separation used by modern coding agents: one skill explains
+    the failure and one supplies the safe implementation pattern.
+    """
     scored = [(s, s.relevance_score(*context)) for s in skills]
     scored = [item for item in scored if item[1] > 0]
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return [s for s, _ in scored[:limit]]
+    scored.sort(key=lambda x: (-x[1], x[0].name))
+    selected: list[Skill] = []
+    for skill, _score in scored:
+        if len(selected) >= limit:
+            break
+        # Avoid returning two near-identical implementation skills when a
+        # contract or verification skill also matched the same failure.
+        family = skill.name.split("-", 2)[-1]
+        if selected and family == selected[0].name.split("-", 2)[-1]:
+            continue
+        selected.append(skill)
+    if len(selected) < limit:
+        for skill, _score in scored:
+            if skill not in selected:
+                selected.append(skill)
+                if len(selected) >= limit:
+                    break
+    return selected
