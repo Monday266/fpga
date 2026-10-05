@@ -274,8 +274,8 @@ module tb_self_check();
     if ({out["name"]} !== model) begin $display("TB_FAILURE: DUT=%h EXP=%h", {out["name"]}, model); errors = errors + 1; end
   end endtask
   initial begin
-    repeat (2) check; @(negedge {clk}); {rst}={rst_inactive}; {load}=1; {data["name"]}=8'hA5; check;
-    @(negedge {clk}); {load}=0; check; check;
+    repeat (2) check; @(negedge {clk}); {rst}={rst_inactive}; {load["name"]}=1; {data["name"]}=8'hA5; check;
+    @(negedge {clk}); {load["name"]}=0; check; check;
     if (errors == 0) $display("TB_SUCCESS: All self-tests passed with 0 errors.");
     else $display("TB_FAILURE: Total %0d mismatches.", errors);
     $finish;
