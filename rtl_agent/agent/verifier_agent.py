@@ -294,6 +294,9 @@ endmodule
         if width == 1:
             feedback = "model[0]"
             shift = "{model[0]}"
+        elif width == 8:
+            feedback = "model[7] ^ model[5] ^ model[4] ^ model[3]"
+            shift = f"{{model[6:0], {feedback}}}"
         else:
             feedback = f"model[{width - 1}] ^ model[{max(0, width - 3)}]"
             shift = f"{{model[{width - 2}:0], {feedback}}}"
