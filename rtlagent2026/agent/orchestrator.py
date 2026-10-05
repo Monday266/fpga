@@ -73,6 +73,35 @@ class MultiAgentOrchestrator:
         self.pruner = DiagnosticPruner()
         self.quality = QualityRollbackGuard()
 
+    @staticmethod
+    def _solution_sha256(code: str) -> str:
+        return hashlib.sha256((code or "").encode("utf-8")).hexdigest()
+
+    def _finish(
+        self,
+        trace: TraceLogger,
+        budget: DynamicBudgetController,
+        code: str,
+        level: int,
+        reason: str,
+    ) -> str:
+        """Record the exact artifact delivered to the submission endpoint.
+
+        Tool-level trace entries describe intermediate candidates.  The final
+        digest closes the audit chain by making it possible to compare the
+        returned solution with the candidate that reached the best milestone.
+        """
+        trace.log(
+            tool="orchestrator",
+            event="finished",
+            delivered_level=level,
+            bytes=len(code or ""),
+            solution_sha256=self._solution_sha256(code),
+            reason=reason,
+            elapsed_total_s=round(budget.elapsed_s, 2),
+        )
+        return code
+
     def solve(self, prompt: str, interface: str, trace: TraceLogger, top_override: str = "") -> str:
         budget = DynamicBudgetController(deadline_s=DEADLINE_S, reserve_s=RESERVE_S, max_rounds=MAX_ROUNDS)
         self.llm.set_deadline(budget.deadline_at)
@@ -163,9 +192,7 @@ class MultiAgentOrchestrator:
                 # honest deliverable when Vivado is absent.
                 trace.log(tool="orchestrator", event="accept", reason="no_toolchain_available", round=rnd,
                           note=self.tools.reason)
-                trace.log(tool="orchestrator", event="finished", delivered_level=1,
-                          bytes=len(current_code), elapsed_total_s=round(budget.elapsed_s, 2))
-                return current_code
+                return self._finish(trace, budget, current_code, 1, "no_toolchain_available")
 
             # --- STAGE 1: xvlog + xelab Single Module Lint (L1) ---
             t_lint = budget.allocate_timeout("lint")
@@ -199,10 +226,7 @@ class MultiAgentOrchestrator:
                 trace.log(tool="orchestrator", event="environment_error", stage="simulation",
                           rc=rc_sim, excerpt=clean_sim_log[:500])
                 best_code, level = self.quality.get_best_deliverable(current_code, final_level=1)
-                trace.log(tool="orchestrator", event="finished", delivered_level=level,
-                          reason="environment_error", bytes=len(best_code),
-                          elapsed_total_s=round(budget.elapsed_s, 2))
-                return best_code
+                return self._finish(trace, budget, best_code, level, "simulation_environment_error")
 
             if rc_sim != 0:
                 is_osc, _ = self.quality.record_attempt(current_code, current_level=1, round_num=rnd)
@@ -234,10 +258,7 @@ class MultiAgentOrchestrator:
                 trace.log(tool="orchestrator", event="environment_error", stage="synthesis",
                           rc=rc_synth, excerpt=clean_synth_log[:500])
                 best_code, level = self.quality.get_best_deliverable(current_code, final_level=2)
-                trace.log(tool="orchestrator", event="finished", delivered_level=level,
-                          reason="environment_error", bytes=len(best_code),
-                          elapsed_total_s=round(budget.elapsed_s, 2))
-                return best_code
+                return self._finish(trace, budget, best_code, level, "synthesis_environment_error")
 
             if rc_synth == 0:
                 self.quality.record_attempt(current_code, current_level=3, round_num=rnd)
@@ -249,7 +270,7 @@ class MultiAgentOrchestrator:
                     elapsed_total_s=round(budget.elapsed_s, 2),
                 )
                 # AGGRESSIVE EARLY EXIT: maximize Cost score
-                return current_code
+                return self._finish(trace, budget, current_code, 3, "synthesis_success")
 
             # Synthesis failure (latches, multi-driven nets, etc.)
             matched_skills = select_skills(self.skills, clean_synth_log, "Synth 8-327", "inferring latch")
@@ -261,11 +282,4 @@ class MultiAgentOrchestrator:
 
         # Monotonic fallback to best verified deliverable
         best_code, level = self.quality.get_best_deliverable(current_code, final_level=0)
-        trace.log(
-            tool="orchestrator",
-            event="finished",
-            delivered_level=level,
-            bytes=len(best_code),
-            elapsed_total_s=round(budget.elapsed_s, 2),
-        )
-        return best_code
+        return self._finish(trace, budget, best_code, level, "budget_exhausted")
