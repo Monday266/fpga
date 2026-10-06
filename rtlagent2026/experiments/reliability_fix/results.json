@@ -4,23 +4,68 @@
   "platform": "Windows",
   "python": "3.12.14",
   "native_requested": true,
-  "tests_run": 29,
-  "passed": 29,
+  "tests_run": 36,
+  "passed": 36,
   "skipped": 0,
   "failures": 0,
   "errors": 0,
   "source_sha256": {
     "agent/tools.py": "7b92fdefb50969d972b81da72cd99fb41e3cb2c197168c1e74b61e218e954889",
-    "agent/orchestrator.py": "df024b5e918b00b13100c9b4b65349d2818fdbd4c721edc0fe14c4b6b034734e",
+    "agent/orchestrator.py": "a7397b3e2177652f8becd4cd35b8c7b8821a0ea49ef2ae3cdf2b6522de50167c",
     "agent/verifier_agent.py": "9f628f34566bf7262a5c141d323fb3bec7e1a139bf56450f105b5c2f8e672f1f",
+    "agent/llm.py": "a51b8c47737fca24dd115af42cf0368c27fdae8dfa0aacb777d8b883e7150f3b",
     "tests/test_reliability.py": "c644c7feea6678d9a8f82569533de4260e0004110be2f38828a1f107d1c2309b",
-    "scripts/run_reliability_tests.py": "baff835a9715e69d9f34e5375c34a1a063b94b3d1f2c22c05ac53e6398c21340"
+    "tests/test_evaluation.py": "edaad6b54893b75951e481eaef44de5462ce028a2ce6a3d9fc982d31bc0b4e1f",
+    "evaluation/run_evaluation.py": "5e8c325753a5484a55f690a305d055dde233f750c744764e8108deef735c05a5",
+    "scripts/run_reliability_tests.py": "97e86069aecf811f62dccf21915f655b5ffab3460a51d6535661572f17d0b2fc"
   },
   "tests": [
     {
-      "test": "test_reliability.MilestoneTests.test_failed_lint_never_claims_l1",
+      "test": "test_evaluation.ExternalJudgeTests.test_duplicate_verdict_rejected",
       "status": "pass",
       "elapsed_s": 0.015,
+      "detail": ""
+    },
+    {
+      "test": "test_evaluation.ExternalJudgeTests.test_failure_marker_overrides_result",
+      "status": "pass",
+      "elapsed_s": 0.0,
+      "detail": ""
+    },
+    {
+      "test": "test_evaluation.ExternalJudgeTests.test_mismatch_fails",
+      "status": "pass",
+      "elapsed_s": 0.0,
+      "detail": ""
+    },
+    {
+      "test": "test_evaluation.ExternalJudgeTests.test_simulator_crash_rejected",
+      "status": "pass",
+      "elapsed_s": 0.016,
+      "detail": ""
+    },
+    {
+      "test": "test_evaluation.ExternalJudgeTests.test_single_zero_mismatch_pass",
+      "status": "pass",
+      "elapsed_s": 0.0,
+      "detail": ""
+    },
+    {
+      "test": "test_evaluation.ExternalJudgeTests.test_success_marker_alone_does_not_pass",
+      "status": "pass",
+      "elapsed_s": 0.0,
+      "detail": ""
+    },
+    {
+      "test": "test_evaluation.ExternalJudgeTests.test_zero_samples_rejected",
+      "status": "pass",
+      "elapsed_s": 0.015,
+      "detail": ""
+    },
+    {
+      "test": "test_reliability.MilestoneTests.test_failed_lint_never_claims_l1",
+      "status": "pass",
+      "elapsed_s": 0.0,
       "detail": ""
     },
     {
@@ -56,7 +101,7 @@
     {
       "test": "test_reliability.NativeVivadoTests.test_correct_inverter",
       "status": "pass",
-      "elapsed_s": 3.515,
+      "elapsed_s": 3.765,
       "detail": ""
     },
     {
@@ -68,7 +113,7 @@
     {
       "test": "test_reliability.NativeVivadoTests.test_valid_native_synthesis",
       "status": "pass",
-      "elapsed_s": 24.469,
+      "elapsed_s": 24.641,
       "detail": ""
     },
     {
@@ -86,7 +131,7 @@
     {
       "test": "test_reliability.ToolVerdictTests.test_legacy_success_is_not_proof",
       "status": "pass",
-      "elapsed_s": 0.016,
+      "elapsed_s": 0.0,
       "detail": ""
     },
     {
@@ -98,7 +143,7 @@
     {
       "test": "test_reliability.ToolVerdictTests.test_mixed_verdict_rejected",
       "status": "pass",
-      "elapsed_s": 0.0,
+      "elapsed_s": 0.016,
       "detail": ""
     },
     {
@@ -110,13 +155,13 @@
     {
       "test": "test_reliability.ToolVerdictTests.test_nonzero_exit_rejected",
       "status": "pass",
-      "elapsed_s": 0.015,
+      "elapsed_s": 0.0,
       "detail": ""
     },
     {
       "test": "test_reliability.ToolVerdictTests.test_nonzero_synthesis_is_not_success",
       "status": "pass",
-      "elapsed_s": 0.0,
+      "elapsed_s": 0.015,
       "detail": ""
     },
     {
@@ -134,7 +179,7 @@
     {
       "test": "test_reliability.ToolVerdictTests.test_successful_synthesis_with_license_messages",
       "status": "pass",
-      "elapsed_s": 0.016,
+      "elapsed_s": 0.0,
       "detail": ""
     },
     {
@@ -146,7 +191,7 @@
     {
       "test": "test_reliability.ToolVerdictTests.test_zero_comparisons_not_verified",
       "status": "pass",
-      "elapsed_s": 0.0,
+      "elapsed_s": 0.016,
       "detail": ""
     },
     {

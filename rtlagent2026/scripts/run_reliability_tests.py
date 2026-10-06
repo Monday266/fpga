@@ -41,7 +41,7 @@ def main():
             self.note(test, 'skip', reason)
     suite = unittest.defaultTestLoader.discover(str(root / 'tests'))
     result = unittest.TextTestRunner(verbosity=2, resultclass=RecordingResult).run(suite)
-    source_paths = ['agent/tools.py', 'agent/orchestrator.py', 'agent/verifier_agent.py', 'tests/test_reliability.py', 'scripts/run_reliability_tests.py']
+    source_paths = ['agent/tools.py', 'agent/orchestrator.py', 'agent/verifier_agent.py', 'agent/llm.py', 'tests/test_reliability.py', 'tests/test_evaluation.py', 'evaluation/run_evaluation.py', 'scripts/run_reliability_tests.py']
     payload = {'scope': 'Reliability regression only; NOT a model evaluation or official L0-L3 score',
         'upstream_base_commit': '868b44dc1e0ffb0e951394462978e4fe66566eb9',
         'platform': platform.system(), 'python': platform.python_version(),

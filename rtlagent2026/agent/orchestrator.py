@@ -60,7 +60,7 @@ class MultiAgentOrchestrator:
     def __init__(self, skill_dir: str):
         self.llm = LLM()
         self.tools = RtlToolchain()
-        self.skills = load_skills(skill_dir)
+        self.skills = [] if os.environ.get("AGENT_DISABLE_SKILLS") == "1" else load_skills(skill_dir)
 
         # Initialize subagents
         self.spec_agent = SpecAgent(self.llm)
